@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
-import { App, debugEnv, helpers, pictureName, runScenarios, selectScenarios } from '../src/app.js'
+import { App, webviewGone, debugEnv, helpers, pictureName, runScenarios, selectScenarios } from '../src/app.js'
 
 const names = ['open a folder', 'add a record', 'search', 'close']
 
@@ -74,4 +74,15 @@ test('runScenarios with --repeat starts fresh each run and counts the runs that 
   assert.equal(code, 0)
   assert.equal(starts, 2)
   assert.match(lines.at(-1), /2 of 2 runs passed/)
+})
+
+test("an app's own subclass launches as itself, so its own methods are there after a launch", () => {
+  // Launching needs a real window; what matters is what launch constructs — the class it was called on.
+  assert.match(App.launch.toString(), /new this\(\)/)
+  assert.match(App.prototype.restart.toString(), /this\.constructor\.launch/)
+})
+
+test('waiting for a web view profile takes an app identifier, and has nothing to wait for off Windows', async () => {
+  await assert.rejects(webviewGone("x' ; Stop-Computer", { platform: 'win32' }), /takes an app identifier/)
+  await webviewGone('com.example.app', { platform: 'linux' })
 })

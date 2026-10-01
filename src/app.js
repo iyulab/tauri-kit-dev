@@ -87,6 +87,8 @@ export class App {
    * @param {string} [options.helpersName]    where the in-page helpers go (default `__e2e`)
    * @param {boolean} [options.debugPortFromEnv]  open the port through WebView2's environment variable (default true)
    * @param {number} [options.timeoutMs]      how long to wait for the window (default 60 s)
+   * @param {string} [options.webviewProfile] text in the command line of the app's WebView2 processes — its
+   *        identifier, which names its profile folder. `quit` then also waits for those processes (Windows).
    */
   static async launch(options) {
     const { exe, port, ready = `document.readyState === 'complete'`, env = {}, args = [], helpersName = '__e2e', debugPortFromEnv = true, timeoutMs = 60_000 } = options
@@ -94,7 +96,8 @@ export class App {
     if (await portAnswers(port)) {
       throw new Error(`something already answers on debugging port ${port} — close the window an earlier run left open`)
     }
-    const app = new App()
+    // `this`: an app's own subclass launches as itself.
+    const app = new this()
     app.#options = options
     app.child = spawn(exe, args, { stdio: 'ignore', env: { ...process.env, ...(debugPortFromEnv ? debugEnv(port) : {}), ...env } })
     const exited = new Promise((_, reject) => app.child.once('exit', (code) => reject(new Error(`${exe} exited with ${code} before its window was ready`))))
@@ -114,7 +117,7 @@ export class App {
   /** Ends the app the hard way and starts it again in this same App, with `env` added. */
   async restart(env = {}) {
     await this.quit()
-    const next = await App.launch({ ...this.#options, env: { ...this.#options.env, ...env } })
+    const next = await this.constructor.launch({ ...this.#options, env: { ...this.#options.env, ...env } })
     this.child = next.child
     this.cdp = next.cdp
   }
@@ -132,6 +135,8 @@ export class App {
     this.child = undefined
     const until = Date.now() + 15_000
     while ((await portAnswers(this.#options.port)) && Date.now() < until) await new Promise((r) => setTimeout(r, 200))
+    // A launch that joins a browser still shutting down on the same profile never opens the port.
+    if (this.#options.webviewProfile) await webviewGone(this.#options.webviewProfile)
   }
 
   get #h() {
@@ -147,14 +152,48 @@ export class App {
     await this.cdp.clickAt(box)
   }
 
-  /** Focuses the field matching `selector`, selects what it holds, and types `text` over it. */
+  /**
+   * Focuses the field matching `selector` — an input, a textarea or an editable element — selects what it
+   * holds, and types `text` over it.
+   */
   async fill(selector, text) {
     await this.cdp.waitFor(
-      `(() => { const el = ${this.#h}.one(${q(selector)}); if (!el || el.disabled) return false; el.focus(); el.select?.(); return true })()`,
+      `(() => { const el = ${this.#h}.one(${q(selector)}); if (!el || el.disabled) return false; el.focus()
+        if (el.isContentEditable) { const r = document.createRange(); r.selectNodeContents(el); getSelection().removeAllRanges(); getSelection().addRange(r) }
+        else el.select?.()
+        return true })()`,
       `field ${selector}`,
     )
     await this.cdp.insertText(text)
   }
+}
+
+/**
+ * Waits until no WebView2 process runs whose command line holds `profile`. A killed app's browser notices
+ * only after a while; past `graceMs` the leftovers, which belong to that profile alone, are ended too.
+ * WebView2 is Windows' web view, so elsewhere there is nothing to wait for.
+ */
+export async function webviewGone(profile, { graceMs = 10_000, platform = process.platform } = {}) {
+  if (platform !== 'win32') return
+  const { execFileSync } = await import('node:child_process')
+  // An identifier: letters, digits, dots and dashes — nothing a PowerShell wildcard or quote would read.
+  if (!/^[\w.-]+$/.test(profile)) throw new Error(`webviewProfile takes an app identifier, not "${profile}"`)
+  const like = profile
+  // The process table can still list a process that has exited while something holds a handle to it;
+  // only ones Get-Process can open are running.
+  const on = `Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" | Where-Object { $_.CommandLine -like '*${like}*' -and (Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue) }`
+  const left = () => Number(execFileSync('powershell', ['-NoProfile', '-Command', `@(${on}).Count`], { encoding: 'utf8' }).trim())
+  const settle = async (ms) => {
+    const until = Date.now() + ms
+    while (Date.now() < until) {
+      if (left() === 0) return true
+      await new Promise((r) => setTimeout(r, 250))
+    }
+    return false
+  }
+  if (await settle(graceMs)) return
+  execFileSync('powershell', ['-NoProfile', '-Command', `${on} | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`])
+  if (!(await settle(5_000))) throw new Error(`WebView2 on the profile ${profile} did not exit`)
 }
 
 /**

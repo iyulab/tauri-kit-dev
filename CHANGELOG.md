@@ -2,7 +2,19 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `App.fill` replaces what an editable element (`contenteditable`) holds, as it does an input's value;
+  it used to type after it.
+- `App.launch` constructs the class it is called on, so an app's own subclass of `App` (with its own
+  steps — open a document, pick a tab) launches and restarts as that subclass.
+
 ### Added
+
+- `App.launch({ webviewProfile })` and `webviewGone(profile)`: `quit` also waits until the app's WebView2
+  processes — found by the identifier in their command line — have exited, ending leftovers after a
+  grace period. A window started while the last one's browser is still shutting down on the same
+  profile never opens its debugging port; the port going quiet comes before that.
 
 - `@iyulab/tauri-kit-dev/provenance`: say which source a built helper was made from, so checks
   that run it test what they mean to. `gitSourceState(cwd, folder)` gives a folder's committed tree,
