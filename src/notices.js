@@ -320,7 +320,9 @@ export function noticesText(packages, { title = 'Third-party notices' } = {}) {
 const pinFiles = (pin) => (Array.isArray(pin) ? pin : [pin])
 const pinPath = (dir, key, index, count) =>
   join(dir, `${key.replace(/[\\/:*?"<>|]/g, '_')}${count > 1 ? `.${index + 1}` : ''}.txt`)
-const digest = (bytes) => createHash('sha256').update(bytes).digest('hex')
+// The digest is of the text with CRLF read as LF, so a checkout that converts line endings (git's
+// autocrlf on Windows) still matches the pin.
+const digest = (bytes) => createHash('sha256').update(bytes.toString('utf8').replace(/\r\n/g, '\n')).digest('hex')
 
 /** @param {string | Record<string, Pin>} pins a pins JSON file, or its contents */
 const pinTable = (pins) => (typeof pins === 'string' ? (existsSync(pins) ? JSON.parse(readFileSync(pins, 'utf8')) : {}) : pins)

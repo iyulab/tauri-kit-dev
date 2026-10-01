@@ -228,6 +228,13 @@ test('pinned texts fill in packages without one, only when the committed file is
   // a moved version no longer matches its pin
   assert.deepEqual(applyPinned([pkg('a', '1.0.1')], { pins: pinsFile, dir: texts }).unused, ['a@1.0.0', '@s/b@2.0.0'])
 
+  // a checkout that converts line endings still matches
+  const converted = readdirSync(texts).find((f) => f.startsWith('a@'))
+  writeFileSync(join(texts, converted), readFileSync(join(texts, converted), 'utf8').replace(/\r?\n/g, '\r\n'))
+  assert.deepEqual(applyPinned([pkg('a', '1.0.0')], { pins: pinsFile, dir: texts }).problems, [])
+  writeFileSync(join(texts, converted), readFileSync(join(texts, converted), 'utf8').replace(/\r\n/g, '\n'))
+  assert.deepEqual(applyPinned([pkg('a', '1.0.0')], { pins: pinsFile, dir: texts }).problems, [])
+
   // a file edited by hand is not the pinned text
   const edited = readdirSync(texts).find((f) => f.startsWith('a@'))
   writeFileSync(join(texts, edited), 'something else')

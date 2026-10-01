@@ -26,7 +26,8 @@
 - `notices`: pinned license texts, for a package that publishes without its text.
   `applyPinned(packages, { pins, dir })` fills such packages in from committed files, keyed
   `name@version` in a pins JSON of `{ source, sha256 }` — or a list of them, for a license whose
-  conditions span several files (Apache-2.0's NOTICE) — and checks every digest — no network, so a
+  conditions span several files (Apache-2.0's NOTICE) — and checks every digest (taken with CRLF
+  read as LF, so a checkout that converts line endings still matches) — no network, so a
   check gives the same answer everywhere. It reports the pins that applied to nothing (a moved
   version, a package now carrying its own text) and the ones that could not be applied (file
   missing, digest differs); a filled package gets `textSource`, which `noticesText` prints.
