@@ -9,6 +9,15 @@
   added lines. The exception sits next to the fixture it is for instead of in a `path:text` list
   kept elsewhere. `ALLOW_MARK` and `markedAllowed(lines, index)` are exported.
 
+### Fixed
+
+- `installer`: `run` quotes the program's own path. Run verbatim (NSIS takes `/D=` unquoted), a path
+  with a space was cut there and NSIS read the rest as options — a folder named `rt` as `/R`, which
+  starts the app once installed, leaving a second copy running beside the one a check starts.
+- `installer`: `withInstalled` hands the body the temporary folder's long form. A runner's temporary
+  folder can come in its 8.3 form (`RUNNER~1`), which compares unequal to the paths running processes
+  report.
+
 ## [0.2.0] - 2026-10-01
 
 ### Fixed

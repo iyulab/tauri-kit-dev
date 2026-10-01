@@ -9,7 +9,7 @@
 
 import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, readdirSync } from 'node:fs'
-import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -54,7 +54,9 @@ export function pickUpgradeFrom(releases, version, asked) {
 
 /** Runs a program to completion, without a console, and fails unless it exits 0. */
 export function run(exe, args, what = `${exe} ${args.join(' ')}`) {
-  const result = spawnSync(exe, args, { stdio: 'ignore', windowsVerbatimArguments: true })
+  // Verbatim, since NSIS takes `/D=` unquoted even with spaces; the program's own path is quoted, or
+  // a space ends it and NSIS reads the rest as options — `…/rt/…` as `/R`, run the app after installing.
+  const result = spawnSync(exe, args, { stdio: 'ignore', windowsVerbatimArguments: true, argv0: `"${exe}"` })
   if (result.status !== 0) throw new Error(`${what}: exited with ${result.status}${result.error ? ` (${result.error.message})` : ''}`)
 }
 
@@ -109,7 +111,9 @@ export async function uninstall(target, { exe, timeoutMs = 10_000 } = {}) {
  * @param {{ exe?: string, prefix?: string }} [options]  exe: the app's file name, checked to be gone after uninstalling
  */
 export async function withInstalled(installer, body, { exe, prefix = 'tauri-app-installed-' } = {}) {
-  const temp = await mkdtemp(join(tmpdir(), prefix))
+  // The folder's long form: a temporary folder can come in its short one (RUNNER~1 on CI runners),
+  // which compares unequal to the paths the installed processes report.
+  const temp = await realpath(await mkdtemp(join(tmpdir(), prefix)))
   const target = join(temp, 'app')
   try {
     run(installer, nsisArgs(target), 'installing')
