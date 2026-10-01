@@ -124,6 +124,14 @@ export default {
 }
 ```
 
+A line that is meant to carry what a rule finds — a test whose subject is a home folder — says so
+on that line or the one above it, so the exception sits next to its reason:
+
+```js
+// public-text: allow — the test is about paths under a home folder
+const home = 'C:\Users\someone\notes'
+```
+
 The same check is available as a function:
 
 ```js

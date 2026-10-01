@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { DEFAULT_RULES, checkRepo, rulesOf, scan } from '../src/public-text.js'
+import { ALLOW_MARK, DEFAULT_RULES, checkRepo, markedAllowed, rulesOf, scan } from '../src/public-text.js'
 
 const whys = (text, rules) => scan(text, rules).map((f) => f.why)
 // Built at run time, so this file does not itself carry what it tests for.
@@ -66,4 +66,35 @@ test('a file whose path holds characters outside ASCII is checked too', (t) => {
   git('commit', '-qm', 'add notes')
   const found = checkRepo(repo, { config: { forbidden: [{ why: 'name', re: /\bsecret-project\b/ }] } })
   assert.deepEqual(found.map((f) => f.where), ['nötes 日記.md:1'])
+})
+
+test('a line marked as allowed, on itself or just above, is left alone', (t) => {
+  const repo = mkdtempSync(join(tmpdir(), 'public-text-'))
+  t.after(() => rmSync(repo, { recursive: true, force: true }))
+  const git = (...args) => execFileSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { encoding: 'utf8' })
+  git('init', '-q')
+  const mark = ['public-text', 'allow'].join(': ')
+  writeFileSync(join(repo, 'fixture.js'), [
+    `const a = '${userPath}' // ${mark} — the test is about home folders`,
+    `// ${mark} — same, written above`,
+    `const b = '${userPath}'`,
+    '',
+    `const c = '${userPath}'`,
+  ].join('\n'))
+  git('add', '.')
+  git('commit', '-qm', 'fixtures')
+
+  assert.deepEqual(checkRepo(repo).map((f) => f.where), ['fixture.js:5'])
+  assert.deepEqual(
+    checkRepo(repo, { history: true }).filter((f) => f.why.endsWith('(history)')).map((f) => f.text),
+    [`const c = '${userPath}'`],
+  )
+})
+
+test('markedAllowed looks at the line and the one above, nothing further', () => {
+  const lines = ['x', `// ${ALLOW_MARK}`, 'y', 'z']
+  assert.equal(markedAllowed(lines, 0), false)
+  assert.equal(markedAllowed(lines, 1), true)
+  assert.equal(markedAllowed(lines, 2), true)
+  assert.equal(markedAllowed(lines, 3), false)
 })

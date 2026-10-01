@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Added
+
+- `public-text`: a line marked `public-text: allow` — on the line itself or the line just above it,
+  best followed by why — is left out of the findings, in tracked files and, with `--history`, in
+  added lines. The exception sits next to the fixture it is for instead of in a `path:text` list
+  kept elsewhere. `ALLOW_MARK` and `markedAllowed(lines, index)` are exported.
+
 ## [0.2.0] - 2026-10-01
 
 ### Fixed

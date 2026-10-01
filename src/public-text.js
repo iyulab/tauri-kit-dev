@@ -31,6 +31,18 @@ export const DEFAULT_RULES = [
   { why: 'private host', re: /\b10\.\d{1,3}\.\d{1,3}\.\d{1,3}\b|\b192\.168\.\d{1,3}\.\d{1,3}\b|\b172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}\b|\.(?:internal)\b/ },
 ]
 
+/**
+ * Marks one line as meant to carry what a rule finds — a test fixture whose subject is a local
+ * path, say. Written on that line or on the line just above it, best followed by why:
+ * `// public-text: allow — the test is about home folders`.
+ */
+export const ALLOW_MARK = 'public-text: allow'
+
+/** True when line `index` of `lines` (0-based) carries the allow mark, or the line above it does. */
+export function markedAllowed(lines, index) {
+  return lines[index]?.includes(ALLOW_MARK) === true || (index > 0 && lines[index - 1]?.includes(ALLOW_MARK) === true)
+}
+
 /** Files whose bytes are not text, or whose text is generated. */
 export const BINARY = /\.(png|jpe?g|gif|ico|icns|webp|woff2?|ttf|otf|mp4|webm|pdf|zip|exe|dll|lock)$|package-lock\.json$|LICENSE$/i
 
@@ -83,8 +95,9 @@ export function checkRepo(repo, { config = {}, history = false } = {}) {
     } catch {
       continue // listed but not committed yet
     }
+    const lines = text.split(/\r?\n/)
     for (const f of scan(text, rules)) {
-      if (!isAllowed(file, f.text)) findings.push({ where: `${file}:${f.line}`, why: f.why, text: f.text })
+      if (!isAllowed(file, f.text) && !markedAllowed(lines, f.line - 1)) findings.push({ where: `${file}:${f.line}`, why: f.why, text: f.text })
     }
   }
 
@@ -115,16 +128,22 @@ function addedLines(repo, rules, binary, isAllowed) {
   const log = git(repo, ['log', '-p', '--all', '--no-color', '--no-ext-diff', '--format=\x02%h'])
   let hash = ''
   let file = ''
+  let above = '' // the line before this one in the hunk, where an allow mark may be written
   for (const line of log.split(/\r?\n/)) {
     if (line.startsWith('\x02')) {
       hash = line.slice(1)
+      above = ''
       continue
     }
     if (line.startsWith('+++ ')) {
       file = line.startsWith('+++ b/') ? line.slice(6) : ''
+      above = ''
       continue
     }
+    const previous = above
+    above = line.startsWith('+') || line.startsWith(' ') ? line.slice(1) : ''
     if (!line.startsWith('+') || !file || binary.test(file)) continue
+    if (markedAllowed([previous, line.slice(1)], 1)) continue
     for (const f of scan(line.slice(1), rules)) {
       const key = `${file}\0${f.why}\0${f.text}`
       if (seen.has(key) || isAllowed(file, f.text)) continue
