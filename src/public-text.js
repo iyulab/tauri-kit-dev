@@ -75,7 +75,8 @@ export function checkRepo(repo, { config = {}, history = false } = {}) {
   const isAllowed = (file, text) => allowed.some((a) => `${file}:${text}`.includes(a))
   const findings = []
 
-  for (const file of git(repo, ['ls-files']).split('\n').filter((f) => f && !binary.test(f))) {
+  // NUL-separated: git otherwise quotes a path holding characters outside ASCII, and the quoted form names no file.
+  for (const file of git(repo, ['ls-files', '-z']).split('\0').filter((f) => f && !binary.test(f))) {
     let text
     try {
       text = git(repo, ['show', `HEAD:${file}`])

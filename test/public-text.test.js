@@ -55,3 +55,15 @@ test('a repository: tracked files, unpushed messages, and history', (t) => {
   const history = checkRepo(repo, { config, history: true })
   assert.ok(history.some((f) => f.where.endsWith(':a.txt') && f.why === 'name (history)'), 'a line removed since is still found')
 })
+
+test('a file whose path holds characters outside ASCII is checked too', (t) => {
+  const repo = mkdtempSync(join(tmpdir(), 'public-text-'))
+  t.after(() => rmSync(repo, { recursive: true, force: true }))
+  const git = (...args) => execFileSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { encoding: 'utf8' })
+  git('init', '-q')
+  writeFileSync(join(repo, 'nötes 日記.md'), 'mentions secret-project\n')
+  git('add', '.')
+  git('commit', '-qm', 'add notes')
+  const found = checkRepo(repo, { config: { forbidden: [{ why: 'name', re: /\bsecret-project\b/ }] } })
+  assert.deepEqual(found.map((f) => f.where), ['nötes 日記.md:1'])
+})

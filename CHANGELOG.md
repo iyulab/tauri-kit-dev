@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- `public-text` checks files whose path holds characters outside ASCII. git quoted those paths in its
+  file list, the quoted form named no file, and they were skipped without a word.
 - `App.fill` replaces what an editable element (`contenteditable`) holds, as it does an input's value;
   it used to type after it.
 - `App.launch` constructs the class it is called on, so an app's own subclass of `App` (with its own
