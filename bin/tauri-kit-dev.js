@@ -7,6 +7,12 @@
 //       in with a flag run only when it is given. Exits 1 when a step failed, 2 when it did not
 //       start.
 //
+//   pin-drift --props <file> --assets <file> --publisher <name> [--max-minor-gap <n>] [--waivers <file>]
+//       Checks the NuGet pins of one publisher's packages in a Directory.Packages.props against
+//       nuget.org: a major difference, or more minor versions behind than allowed (default 5),
+//       fails unless a waiver with an unexpired date covers it. --assets is the restored
+//       project.assets.json; --waivers a JSON list of { package, until, reason }. Exits 1 on drift.
+//
 //   public-text [--config <file>] [--history] [<repo>...]
 //       Checks git repositories (default: the current one) for text a public repository must not
 //       carry. --config names a module exporting { forbidden, allowed, defaults, binary } — see
@@ -22,14 +28,17 @@
 //       Installs and starts the app in Windows Sandbox with networking off. --prepare only lays out
 //       the folder and the .wsb file. Exits 1 when the run did not pass.
 
+import { readFileSync } from 'node:fs'
 import { relative } from 'node:path'
 import { parseArgs } from '../src/args.js'
 import { loadGateConfig, runGate } from '../src/gate.js'
+import { checkPinDrift, formatLine } from '../src/pin-drift.js'
 import { checkMachine } from '../src/machine.js'
 import { checkRepo, loadConfig } from '../src/public-text.js'
 import { runInSandbox } from '../src/sandbox.js'
 
 const USAGE = `usage: tauri-kit-dev gate --config <file> [--list] [--only a,b] [--skip c] [--<flag>]
+       tauri-kit-dev pin-drift --props <file> --assets <file> --publisher <name> [--max-minor-gap <n>] [--waivers <file>]
        tauri-kit-dev public-text [--config <file>] [--history] [<repo>...]
        tauri-kit-dev machine [--dotnet]
        tauri-kit-dev sandbox <installer> --exe <file> [--identifier <id>] [--extra <script>] [--without-webview2] [--prepare]`
@@ -40,6 +49,29 @@ async function gate(argv) {
 ${USAGE}`)
   const config = await loadGateConfig(argv[at + 1])
   return runGate({ ...config, argv: argv.filter((_, i) => i !== at && i !== at + 1) })
+}
+
+async function pinDrift(argv) {
+  const args = parseArgs(argv, { options: ['--props', '--assets', '--publisher', '--max-minor-gap', '--waivers'] })
+  const { '--props': props, '--assets': assets, '--publisher': publisher } = args.options
+  if (!props || !assets || !publisher) throw new Error(`--props, --assets and --publisher are required
+${USAGE}`)
+  const gapText = args.options['--max-minor-gap']
+  const maxMinorGap = gapText === undefined ? 5 : Number.parseInt(gapText, 10)
+  if (!Number.isInteger(maxMinorGap) || maxMinorGap < 0) throw new Error(`--max-minor-gap must be a whole number — got "${gapText}"`)
+  const waiversFile = args.options['--waivers']
+  const waivers = waiversFile ? JSON.parse(readFileSync(waiversFile, 'utf8')) : []
+  const report = await checkPinDrift({ props, assets, publisher, maxMinorGap, waivers })
+  for (const line of report.lines) console.log(formatLine(line))
+  if (report.failures) {
+    console.error(`
+${report.failures} package(s) drifted past the threshold (major difference or more than ${maxMinorGap} minor versions).`)
+    console.error(`Upgrade them, or add a waiver with an expiry and a reason${waiversFile ? ` to ${waiversFile}` : ' (--waivers)'}.`)
+    return 1
+  }
+  console.log(`
+Pin drift within threshold: ${report.pinned} pinned, ${report.transitive} transitive.`)
+  return 0
 }
 
 async function publicText(argv) {
@@ -100,7 +132,7 @@ async function sandbox(argv) {
   return 0
 }
 
-const commands = { gate, 'public-text': publicText, machine, sandbox }
+const commands = { gate, 'pin-drift': pinDrift, 'public-text': publicText, machine, sandbox }
 
 async function main([command, ...rest]) {
   const run = commands[command]

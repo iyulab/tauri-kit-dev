@@ -4,6 +4,14 @@
 
 ### Added
 
+- `@iyulab/tauri-kit-dev/pin-drift` and `tauri-kit-dev pin-drift`: NuGet pins of one publisher's
+  packages in a `Directory.Packages.props`, against the newest versions on nuget.org. Which
+  packages count is read from the restored graph — those whose own nuspec names the publisher among
+  its authors. A major difference, or more minor versions behind than allowed (default 5), fails
+  unless a waiver with an unexpired date covers it; a waiver without an expiry is refused, and one
+  no longer needed is reported. The publisher's packages that arrive only transitively are held to
+  the same threshold, and a pinned package whose own floor on another of them lags far behind is
+  noted.
 - `@iyulab/tauri-kit-dev/notices`: third-party notices from the dependency graphs that ship.
   `cargoPackages({ cwd, target })` reads the normal-dependency closure of a Rust binary for one
   target (build- and dev-dependencies left out); `npmPackages({ lock, installedAt })` the

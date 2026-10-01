@@ -30,6 +30,7 @@
     "./installer": "./src/installer.js",
     "./machine": "./src/machine.js",
     "./notices": "./src/notices.js",
+    "./pin-drift": "./src/pin-drift.js",
     "./public-text": "./src/public-text.js",
     "./sandbox": "./src/sandbox.js"
   },
