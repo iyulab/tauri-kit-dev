@@ -1,0 +1,43 @@
+{
+  "name": "@iyulab/tauri-kit-dev",
+  "version": "0.1.0",
+  "description": "Development and verification tools for Tauri desktop apps: drive the WebView2 window over CDP, check installers, and keep public text clean. Nothing here ships inside an app.",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "tauri",
+    "webview2",
+    "cdp",
+    "e2e",
+    "installer",
+    "desktop"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/iyulab/tauri-kit-dev.git"
+  },
+  "bugs": {
+    "url": "https://github.com/iyulab/tauri-kit-dev/issues"
+  },
+  "homepage": "https://github.com/iyulab/tauri-kit-dev#readme",
+  "engines": {
+    "node": ">=22.4"
+  },
+  "exports": {
+    "./cdp": "./src/cdp.js",
+    "./public-text": "./src/public-text.js"
+  },
+  "bin": {
+    "tauri-kit-dev": "./bin/tauri-kit-dev.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "CHANGELOG.md",
+    "docs/SCOPE.md"
+  ],
+  "scripts": {
+    "test": "node --test",
+    "guard": "node bin/tauri-kit-dev.js public-text --config scripts/public-text.config.js ."
+  }
+}
