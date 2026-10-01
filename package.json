@@ -29,6 +29,7 @@
     "./gate": "./src/gate.js",
     "./installer": "./src/installer.js",
     "./machine": "./src/machine.js",
+    "./notices": "./src/notices.js",
     "./public-text": "./src/public-text.js",
     "./sandbox": "./src/sandbox.js"
   },

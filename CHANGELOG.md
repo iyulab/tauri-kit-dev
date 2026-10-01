@@ -4,6 +4,16 @@
 
 ### Added
 
+- `@iyulab/tauri-kit-dev/notices`: third-party notices from the dependency graphs that ship.
+  `cargoPackages({ cwd, target })` reads the normal-dependency closure of a Rust binary for one
+  target (build- and dev-dependencies left out); `npmPackages({ lock, installedAt })` the
+  production closure in an npm lockfile, filling a missing license and the upstream link from
+  installed manifests unless `installedAt` is `null`; `nugetPackages({ assets })` the packages of a
+  restored .NET project that put runtime or native assets into the build, licensed from their
+  nuspecs. Each returns `{ name, version, license, url }`. `needsReview(packages, accepted)` screens
+  SPDX expressions against the caller's accepted set (`PERMISSIVE` to start from — reading
+  `MIT/Apache-2.0` as two identifiers); `noticesTable` renders a Markdown table; `writeOrCheck`
+  regenerates the file or, with `check`, reports whether the committed one is stale.
 - `@iyulab/tauri-kit-dev/gate` and `tauri-kit-dev gate --config <file>`: run an app's checks in
   order the way a merge gate does, but locally and to the end — every step runs even after one
   fails, then a summary lists each step's result and time. Steps are named shell commands; a
