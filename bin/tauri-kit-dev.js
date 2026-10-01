@@ -1,6 +1,12 @@
 #!/usr/bin/env node
 // tauri-kit-dev <command> [options]
 //
+//   gate --config <file> [--list] [--only a,b] [--skip c] [--<flag>]
+//       Runs an app's checks in order, every one even after one fails, and ends with a summary.
+//       --config names a module exporting { steps, preflight? } — see src/gate.js. Steps that opt
+//       in with a flag run only when it is given. Exits 1 when a step failed, 2 when it did not
+//       start.
+//
 //   public-text [--config <file>] [--history] [<repo>...]
 //       Checks git repositories (default: the current one) for text a public repository must not
 //       carry. --config names a module exporting { forbidden, allowed, defaults, binary } — see
@@ -18,13 +24,23 @@
 
 import { relative } from 'node:path'
 import { parseArgs } from '../src/args.js'
+import { loadGateConfig, runGate } from '../src/gate.js'
 import { checkMachine } from '../src/machine.js'
 import { checkRepo, loadConfig } from '../src/public-text.js'
 import { runInSandbox } from '../src/sandbox.js'
 
-const USAGE = `usage: tauri-kit-dev public-text [--config <file>] [--history] [<repo>...]
+const USAGE = `usage: tauri-kit-dev gate --config <file> [--list] [--only a,b] [--skip c] [--<flag>]
+       tauri-kit-dev public-text [--config <file>] [--history] [<repo>...]
        tauri-kit-dev machine [--dotnet]
        tauri-kit-dev sandbox <installer> --exe <file> [--identifier <id>] [--extra <script>] [--without-webview2] [--prepare]`
+
+async function gate(argv) {
+  const at = argv.indexOf('--config')
+  if (at === -1 || at + 1 >= argv.length) throw new Error(`gate needs --config <file>
+${USAGE}`)
+  const config = await loadGateConfig(argv[at + 1])
+  return runGate({ ...config, argv: argv.filter((_, i) => i !== at && i !== at + 1) })
+}
 
 async function publicText(argv) {
   const args = parseArgs(argv, { flags: ['--history'], options: ['--config'] })
@@ -84,7 +100,7 @@ async function sandbox(argv) {
   return 0
 }
 
-const commands = { 'public-text': publicText, machine, sandbox }
+const commands = { gate, 'public-text': publicText, machine, sandbox }
 
 async function main([command, ...rest]) {
   const run = commands[command]
