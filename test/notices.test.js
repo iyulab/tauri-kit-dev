@@ -211,7 +211,7 @@ test('pinned texts fill in packages without one, only when the committed file is
   delete pins['gone@0.1.0']
   delete pins['@s/b@2.0.0'].sha256
   writeFileSync(pinsFile, JSON.stringify(pins))
-  assert.deepEqual(await fetchPinned({ pins: pinsFile, dir: texts, fetch }), { fetched: ['@s/b@2.0.0'], pinned: ['@s/b@2.0.0'] })
+  assert.deepEqual(await fetchPinned({ pins: pinsFile, dir: texts, fetch }), { fetched: ['https://src/@s/b/v2/LICENSE'], pinned: ['https://src/@s/b/v2/LICENSE'] })
   const recorded = JSON.parse(readFileSync(pinsFile, 'utf8'))
   assert.match(recorded['@s/b@2.0.0'].sha256, /^[0-9a-f]{64}$/)
   assert.deepEqual(await fetchPinned({ pins: pinsFile, dir: texts, fetch }), { fetched: [], pinned: [] })
@@ -234,12 +234,28 @@ test('pinned texts fill in packages without one, only when the committed file is
   const tampered = applyPinned([pkg('a', '1.0.0')], { pins: pinsFile, dir: texts })
   assert.deepEqual(withoutText(tampered.packages).map((p) => p.name), ['a'])
   assert.match(tampered.problems[0].problem, /SHA-256 differs/)
-  assert.deepEqual(await fetchPinned({ pins: pinsFile, dir: texts, fetch }), { fetched: ['a@1.0.0'], pinned: [] })
+  assert.deepEqual(await fetchPinned({ pins: pinsFile, dir: texts, fetch }), { fetched: ['https://src/a/v1/LICENSE'], pinned: [] })
 
   // the source changing under a pin is an error, not a silent update
   served['https://src/a/v1/LICENSE'] = 'Copyright (c) Someone else'
   writeFileSync(join(texts, edited), 'something else')
   await assert.rejects(fetchPinned({ pins: pinsFile, dir: texts, fetch }), /a@1\.0\.0: .* is not the pinned text/)
+})
+
+test('a pin can list several files, all of which the package then carries', async () => {
+  const dir = scratch()
+  const served = { 'https://src/x/LICENSE': 'Apache License 2.0', 'https://src/x/NOTICE': 'X\nCopyright X' }
+  const fetch = async (url) => new Response(served[url])
+  const pins = { 'x@1.0.0': [{ source: 'https://src/x/LICENSE' }, { source: 'https://src/x/NOTICE' }] }
+  assert.deepEqual((await fetchPinned({ pins, dir, fetch })).pinned, ['https://src/x/LICENSE', 'https://src/x/NOTICE'])
+  assert.deepEqual(readdirSync(dir).sort(), ['x@1.0.0.1.txt', 'x@1.0.0.2.txt'])
+  const pkg = { name: 'x', version: '1.0.0', license: 'Apache-2.0', url: 'https://x', texts: [] }
+  const { packages, problems } = applyPinned([pkg], { pins, dir })
+  assert.deepEqual(problems, [])
+  assert.deepEqual(packages[0].texts, ['Apache License 2.0', 'X\nCopyright X'])
+  assert.equal(packages[0].textSource, 'https://src/x/LICENSE, https://src/x/NOTICE')
+  writeFileSync(join(dir, 'x@1.0.0.2.txt'), 'changed')
+  assert.deepEqual(withoutText(applyPinned([pkg], { pins, dir }).packages).map((p) => p.name), ['x'], 'one bad file leaves the package without text')
 })
 
 test('writeOrCheck writes, then reports whether the file still matches', () => {

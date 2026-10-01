@@ -87,7 +87,7 @@ async function noticePins(argv) {
   if (!pins || !dir) throw new Error(`--pins and --dir are required
 ${USAGE}`)
   const { fetched, pinned } = await fetchPinned({ pins, dir })
-  for (const key of pinned) console.log(`  + ${key} pinned`)
+  for (const source of pinned) console.log(`  + ${source} pinned`)
   console.log(`${fetched.length} pinned text(s) fetched into ${dir}.`)
   return 0
 }

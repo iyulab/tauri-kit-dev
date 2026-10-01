@@ -307,13 +307,19 @@ export function noticesText(packages, { title = 'Third-party notices' } = {}) {
 //
 // A pin is keyed by `name@version`. When a package moves to another version its pin no longer
 // applies, the package is without text again, and a gate on `withoutText` stops until the new
-// version is pinned — on purpose, since the text can change between versions.
+// version is pinned — on purpose, since the text can change between versions. A pin may list
+// several files, for a license whose conditions span more than one: Apache-2.0 asks for the NOTICE
+// file along with the license, and a package that includes code under another license has that
+// license's text too.
 
 /**
- * @typedef {{ source: string, sha256?: string }} Pin
+ * @typedef {{ source: string, sha256?: string }} PinnedFile
+ * @typedef {PinnedFile | PinnedFile[]} Pin
  */
 
-const pinPath = (dir, key) => join(dir, `${key.replace(/[\\/:*?"<>|]/g, '_')}.txt`)
+const pinFiles = (pin) => (Array.isArray(pin) ? pin : [pin])
+const pinPath = (dir, key, index, count) =>
+  join(dir, `${key.replace(/[\\/:*?"<>|]/g, '_')}${count > 1 ? `.${index + 1}` : ''}.txt`)
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex')
 
 /** @param {string | Record<string, Pin>} pins a pins JSON file, or its contents */
@@ -322,13 +328,15 @@ const pinTable = (pins) => (typeof pins === 'string' ? (existsSync(pins) ? JSON.
 /**
  * Fills in the texts of packages that carry none from pinned, committed files.
  *
- * Returns the packages (a filled one also gets `textSource`, the pin's URL), the pins that applied
- * to nothing (`unused` — a package moved to another version, left the graph, or now carries its own
- * text), and the pins that could not be applied (`problems` — the file is missing, or its digest is
- * not the pinned one). A package with a problem keeps no text, so `withoutText` still lists it.
+ * Returns the packages (a filled one also gets `textSource`, the pinned URLs), the pins that
+ * applied to nothing (`unused` — a package moved to another version, left the graph, or now
+ * carries its own text), and the pins that could not be applied (`problems` — a file is missing,
+ * or its digest is not the pinned one). A package with a problem keeps no text, so `withoutText`
+ * still lists it.
  *
  * @param {Package[]} packages
- * @param {{ pins: string | Record<string, Pin>, dir: string }} options `dir` holds one file per pin
+ * @param {{ pins: string | Record<string, Pin>, dir: string }} options `dir` holds one file per
+ *   pinned file
  * @returns {{ packages: Package[], unused: string[], problems: { key: string, problem: string }[] }}
  */
 export function applyPinned(packages, { pins, dir }) {
@@ -337,33 +345,37 @@ export function applyPinned(packages, { pins, dir }) {
   const problems = []
   const filled = packages.map((p) => {
     const key = `${p.name}@${p.version}`
-    const pin = table[key]
-    if (!pin || p.texts?.length) return p
-    const file = pinPath(dir, key)
-    if (!existsSync(file)) {
-      problems.push({ key, problem: `${file} is missing — fetch the pinned texts` })
-      return p
-    }
-    const bytes = readFileSync(file)
-    if (!pin.sha256 || digest(bytes) !== pin.sha256) {
-      problems.push({ key, problem: pin.sha256 ? `${file} is not the pinned text (SHA-256 differs)` : 'the pin has no SHA-256 — fetch the pinned texts' })
-      return p
+    if (!table[key] || p.texts?.length) return p
+    const files = pinFiles(table[key])
+    const texts = []
+    for (const [i, pinned] of files.entries()) {
+      const file = pinPath(dir, key, i, files.length)
+      if (!existsSync(file)) {
+        problems.push({ key, problem: `${file} is missing — fetch the pinned texts` })
+        return p
+      }
+      const bytes = readFileSync(file)
+      if (!pinned.sha256 || digest(bytes) !== pinned.sha256) {
+        problems.push({ key, problem: pinned.sha256 ? `${file} is not the pinned text (SHA-256 differs)` : `${pinned.source} has no SHA-256 — fetch the pinned texts` })
+        return p
+      }
+      texts.push(bytes.toString('utf8').replace(/\r\n/g, '\n').trim())
     }
     applied.add(key)
-    return { ...p, texts: [bytes.toString('utf8').replace(/\r\n/g, '\n').trim()], textSource: pin.source }
+    return { ...p, texts, textSource: files.map((f) => f.source).join(', ') }
   })
   const unused = Object.keys(table).filter((key) => !applied.has(key) && !problems.some((x) => x.key === key))
   return { packages: filled, unused, problems }
 }
 
 /**
- * Downloads the pinned texts into `dir`. A pin without a SHA-256 is fetched and gets one — written
- * back when `pins` is a file — so pinning starts with `{ source }` alone and the digest records what
- * was seen then. A pin with a SHA-256 is fetched only when its file is missing or differs, and a
- * download that does not match the pinned digest is an error: the source changed under the pin.
+ * Downloads the pinned texts into `dir`. A pinned file without a SHA-256 is fetched and gets one —
+ * written back when `pins` is a file — so pinning starts with `{ source }` alone and the digest
+ * records what was seen then. A file with a SHA-256 is fetched only when it is missing or differs,
+ * and a download that does not match the pinned digest is an error: the source changed under the pin.
  *
  * @param {{ pins: string | Record<string, Pin>, dir: string, fetch?: typeof globalThis.fetch }} options
- * @returns {Promise<{ fetched: string[], pinned: string[] }>} `pinned` lists the pins that got a digest
+ * @returns {Promise<{ fetched: string[], pinned: string[] }>} the URLs fetched, and those that got a digest
  */
 export async function fetchPinned({ pins, dir, fetch = globalThis.fetch }) {
   const table = pinTable(pins)
@@ -372,19 +384,22 @@ export async function fetchPinned({ pins, dir, fetch = globalThis.fetch }) {
   const pinned = []
   try {
     for (const [key, pin] of Object.entries(table)) {
-      const file = pinPath(dir, key)
-      if (pin.sha256 && existsSync(file) && digest(readFileSync(file)) === pin.sha256) continue
-      const response = await fetch(pin.source)
-      if (!response.ok) throw new Error(`${key}: ${pin.source} answered ${response.status}`)
-      const bytes = Buffer.from(await response.arrayBuffer())
-      const got = digest(bytes)
-      if (pin.sha256 && got !== pin.sha256) throw new Error(`${key}: ${pin.source} is not the pinned text (SHA-256 ${got}, pinned ${pin.sha256})`)
-      if (!pin.sha256) {
-        pin.sha256 = got
-        pinned.push(key)
+      const files = pinFiles(pin)
+      for (const [i, entry] of files.entries()) {
+        const file = pinPath(dir, key, i, files.length)
+        if (entry.sha256 && existsSync(file) && digest(readFileSync(file)) === entry.sha256) continue
+        const response = await fetch(entry.source)
+        if (!response.ok) throw new Error(`${key}: ${entry.source} answered ${response.status}`)
+        const bytes = Buffer.from(await response.arrayBuffer())
+        const got = digest(bytes)
+        if (entry.sha256 && got !== entry.sha256) throw new Error(`${key}: ${entry.source} is not the pinned text (SHA-256 ${got}, pinned ${entry.sha256})`)
+        if (!entry.sha256) {
+          entry.sha256 = got
+          pinned.push(entry.source)
+        }
+        writeFileSync(file, bytes)
+        fetched.push(entry.source)
       }
-      writeFileSync(file, bytes)
-      fetched.push(key)
     }
   } finally {
     // The texts fetched before a failure keep their digests.
