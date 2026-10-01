@@ -34,6 +34,73 @@ cdp.close()
 `portAnswers(port)` tells whether something is already listening — a window left over from an
 earlier run would otherwise answer in place of the one just started.
 
+## Running scenarios against the app
+
+```js
+import { App, runScenarios } from '@iyulab/tauri-kit-dev/app'
+
+const options = {
+  exe: 'target/debug/my-app.exe',
+  port: 9224,
+  ready: `!!document.querySelector('my-app')`, // when the window counts as ready is the app's to say
+}
+
+process.exitCode = await runScenarios(
+  {
+    'opens the settings': async (app) => {
+      await app.click('button', 'Settings')
+      await app.cdp.waitFor(`__e2e.one('h1', 'Settings')`, 'the settings page')
+    },
+    'saves a name': async (app) => {
+      await app.fill('input[aria-label="Name"]', 'Ada')
+      await app.cdp.press('Enter')
+    },
+  },
+  { start: async () => ({ app: await App.launch(options) }) },
+)
+```
+
+Scenarios run in order against one window, each building on what the last left. `--through
+<part of a name>` stops after the first scenario whose name contains it and `--repeat <n>` runs
+that many times, each from a fresh start — for a scenario that fails only sometimes.
+`E2E_SCREENSHOTS=<dir>` saves a picture after each scenario, and of the window when one fails.
+
+## Checking the installer
+
+```js
+import { join } from 'node:path'
+import { findInstaller, startsAndStays, withInstalled } from '@iyulab/tauri-kit-dev/installer'
+
+const installer = findInstaller('target/release/bundle/nsis', { version: '1.2.0' })
+await withInstalled(installer, async (target) => {
+  // installed silently for the current user into a temporary folder
+  if (!(await startsAndStays(join(target, 'my-app.exe')))) throw new Error('the installed app did not stay up')
+}, { exe: 'my-app.exe' }) // uninstalled afterwards, and checked to be gone
+```
+
+Installing over the latest published version (`pickUpgradeFrom`, `downloadInstaller`) and checking
+that WebView2 profile copies are dropped (`profileSnapshots`, `seedProfileSnapshot`) use the same
+pieces.
+
+On a computer without internet, in Windows Sandbox:
+
+```sh
+npx tauri-kit-dev sandbox <installer> --exe my-app.exe [--extra checks.ps1] [--without-webview2]
+```
+
+The script inside records each step and writes a result the command reads back; `--extra` adds
+the app's own steps (`Step '<name>' { ... }`, with `$target` the install folder). Windows Sandbox
+is an optional Windows feature (Containers-DisposableClientVM).
+
+## Checking the build machine
+
+```sh
+npx tauri-kit-dev machine [--dotnet]
+```
+
+On Windows, the Rust toolchain must be MSVC; with `--dotnet`, a per-user .NET install needs
+`DOTNET_ROOT` for a bundled .NET helper process.
+
 ## Checking public text
 
 ```sh

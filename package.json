@@ -24,8 +24,12 @@
     "node": ">=22.4"
   },
   "exports": {
+    "./app": "./src/app.js",
     "./cdp": "./src/cdp.js",
-    "./public-text": "./src/public-text.js"
+    "./installer": "./src/installer.js",
+    "./machine": "./src/machine.js",
+    "./public-text": "./src/public-text.js",
+    "./sandbox": "./src/sandbox.js"
   },
   "bin": {
     "tauri-kit-dev": "./bin/tauri-kit-dev.js"
