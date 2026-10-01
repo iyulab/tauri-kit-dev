@@ -16,15 +16,40 @@
 //     that put runtime or native assets into the build — for a bundled .NET helper. Meta-packages
 //     and analyzers carry none.
 //
-// Every reader returns `{ name, version, license, url }`, sorted by name and version.
+// Every reader returns `{ name, version, license, url, texts }`, sorted by name and version.
+// `texts` holds the license texts the package itself carries (LICENSE, LICENSE-MIT, COPYING, NOTICE,
+// or the file a nuspec names). Most permissive licenses make keeping that text — with its copyright
+// line — the condition itself, so an identifier alone does not satisfy them: `withoutText` lists the
+// packages that carry none, and `noticesText` renders a document that includes every text.
 
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 
 /**
- * @typedef {{ name: string, version: string, license: string, url: string }} Package
+ * @typedef {{ name: string, version: string, license: string, url: string, texts: string[] }} Package
  */
+
+const LICENSE_FILE = /^(?:licen[cs]e|copying|notice)(?:[-._].*)?$/i
+
+/**
+ * The license texts a package folder carries — LICENSE, LICENSE-MIT, LICENSE.txt, COPYING, NOTICE and
+ * the like — in file name order, trimmed. A missing folder carries none.
+ *
+ * @param {string} dir
+ * @returns {string[]}
+ */
+export function licenseTexts(dir) {
+  if (!dir || !existsSync(dir)) return []
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((e) => e.isFile() && LICENSE_FILE.test(e.name))
+    .map((e) => e.name)
+    .sort()
+    .map((name) => readText(join(dir, name)))
+    .filter(Boolean)
+}
+
+const readText = (path) => readFileSync(path, 'utf8').replace(/\r\n/g, '\n').trim()
 
 /**
  * License identifiers that put no condition on the app beyond keeping the notice. An app adds the
@@ -72,10 +97,16 @@ export function needsReview(packages, accepted) {
   return packages.filter((p) => !isAccepted(p.license, set))
 }
 
+/** The packages that carry no license text of their own. @param {Package[]} packages */
+export function withoutText(packages) {
+  return packages.filter((p) => !p.texts?.length)
+}
+
 const byNameThenVersion = (a, b) => a.name.localeCompare(b.name) || a.version.localeCompare(b.version)
 
 /**
- * The normal-dependency closure of the Rust package at `cwd`, resolved for `target`.
+ * The normal-dependency closure of the Rust package at `cwd`, resolved for `target` — the package
+ * itself and the other members of its workspace left out, being the app's own code.
  *
  * @param {{ cwd: string, target: string, metadata?: object }} options `metadata` is the parsed
  *   output of `cargo metadata --format-version 1 --filter-platform <target>`; without it, cargo is run.
@@ -105,15 +136,22 @@ export function cargoPackages({ cwd, target, metadata }) {
     }
   }
   reached.delete(meta.resolve.root)
+  for (const member of meta.workspace_members ?? []) reached.delete(member)
   return [...reached]
     .map((id) => byId.get(id))
     .filter(Boolean)
-    .map((p) => ({
-      name: p.name,
-      version: p.version,
-      license: p.license ?? '(not declared)',
-      url: p.repository ?? `https://crates.io/crates/${p.name}`,
-    }))
+    .map((p) => {
+      const dir = p.manifest_path ? dirname(p.manifest_path) : null
+      const texts = licenseTexts(dir)
+      if (!texts.length && dir && p.license_file && existsSync(join(dir, p.license_file))) texts.push(readText(join(dir, p.license_file)))
+      return {
+        name: p.name,
+        version: p.version,
+        license: p.license ?? '(not declared)',
+        url: p.repository ?? `https://crates.io/crates/${p.name}`,
+        texts,
+      }
+    })
     .sort(byNameThenVersion)
 }
 
@@ -123,9 +161,9 @@ export function cargoPackages({ cwd, target, metadata }) {
  *
  * @param {{ lock: string, installedAt?: string | null }} options `installedAt` is where the
  *   packages are installed: their manifests fill in a license the lockfile lacks and the upstream
- *   URL it never records. Pass `null` to read the lockfile alone — for a closure whose output must
- *   not depend on whether it happens to be installed on this machine (every URL is then the
- *   registry page).
+ *   URL it never records, and their folders the license texts. Pass `null` to read the lockfile
+ *   alone — for a closure whose output must not depend on whether it happens to be installed on
+ *   this machine (every URL is then the registry page, and no package carries a text).
  * @returns {Package[]}
  */
 export function npmPackages({ lock, installedAt = null }) {
@@ -150,6 +188,7 @@ export function npmPackages({ lock, installedAt = null }) {
       version: entry.version ?? manifest.version ?? '(unknown)',
       license: typeof declared === 'string' ? declared : '(not declared)',
       url: (repo ?? `https://www.npmjs.com/package/${name}`).replace(/^git\+/, '').replace(/\.git$/, ''),
+      texts: installedAt ? licenseTexts(join(installedAt, path)) : [],
     })
   }
   return packages.sort(byNameThenVersion)
@@ -190,7 +229,8 @@ export function nugetPackages({ assets }) {
       if (!hasFiles(lib.runtime) && !hasFiles(lib.native) && !hasFiles(lib.runtimeTargets)) continue
       const [name, version] = key.split('/')
       const id = name.toLowerCase()
-      const nuspecPath = join(folder, id, version.toLowerCase(), `${id}.nuspec`)
+      const dir = join(folder, id, version.toLowerCase())
+      const nuspecPath = join(dir, `${id}.nuspec`)
       const nuspec = existsSync(nuspecPath) ? readFileSync(nuspecPath, 'utf8') : ''
       const expression = nuspec.match(/<license\s+type="expression"\s*>([^<]+)<\/license>/)?.[1]?.trim()
       const licenseFile = nuspec.match(/<license\s+type="file"\s*>([^<]+)<\/license>/)?.[1]?.trim()
@@ -203,11 +243,12 @@ export function nugetPackages({ assets }) {
         license:
           expression ??
           (licenseFile
-            ? (licenseFromFile(join(folder, id, version.toLowerCase(), licenseFile)) ?? `see ${licenseFile} in the package`)
+            ? (licenseFromFile(join(dir, licenseFile)) ?? `see ${licenseFile} in the package`)
             : licenseUrl
               ? `see ${licenseUrl}`
               : '(not declared)'),
         url: (repo ?? `https://www.nuget.org/packages/${name}`).replace(/\.git$/, ''),
+        texts: licenseFile && existsSync(join(dir, licenseFile)) ? [readText(join(dir, licenseFile))] : licenseTexts(dir),
       })
     }
   }
@@ -219,6 +260,36 @@ export function nugetPackages({ assets }) {
 export function noticesTable(packages) {
   const rows = packages.map((p) => `| \`${p.name}\` | ${p.version} | ${p.license} | ${p.url} |`)
   return ['| Component | Version | License | Upstream |', '| --- | --- | --- | --- |', ...rows].join('\n')
+}
+
+/**
+ * A plain-text notices document: a heading, then each package with its license, upstream and the
+ * license texts it carries. A text that several packages carry word for word is printed once, at
+ * its first package, and referred to from the others — each text is still kept whole, copyright
+ * lines included, which grouping packages under one license name would lose.
+ *
+ * @param {Package[]} packages
+ * @param {{ title?: string }} [options]
+ */
+export function noticesText(packages, { title = 'Third-party notices' } = {}) {
+  const rule = '-'.repeat(78)
+  const count = new Map()
+  for (const p of packages) for (const t of p.texts ?? []) count.set(t, (count.get(t) ?? 0) + 1)
+  const firstAt = new Map()
+  const out = [title, '='.repeat(title.length), '', `This program includes the following ${packages.length} third-party packages.`, '']
+  for (const p of packages) {
+    out.push(rule, `${p.name} ${p.version}`, `License: ${p.license}`, `Upstream: ${p.url}`)
+    for (const t of p.texts ?? []) {
+      if (firstAt.has(t)) {
+        out.push('', `Same license text as ${firstAt.get(t)}.`)
+        continue
+      }
+      if (count.get(t) > 1) firstAt.set(t, `${p.name} ${p.version}`)
+      out.push('', t)
+    }
+    out.push('')
+  }
+  return out.join('\n')
 }
 
 /**

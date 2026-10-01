@@ -10,8 +10,10 @@ import {
   licenseIdentifiers,
   needsReview,
   noticesTable,
+  noticesText,
   npmPackages,
   nugetPackages,
+  withoutText,
   writeOrCheck,
 } from '../src/notices.js'
 
@@ -53,9 +55,42 @@ test('the cargo closure follows normal dependencies only', () => {
   }
   const packages = cargoPackages({ cwd: '.', target: 'x86_64-pc-windows-msvc', metadata })
   assert.deepEqual(packages, [
-    { name: 'itoa', version: '1.0.0', license: '(not declared)', url: 'https://crates.io/crates/itoa' },
-    { name: 'serde', version: '1.0.0', license: 'MIT', url: 'https://github.com/serde-rs/serde' },
+    { name: 'itoa', version: '1.0.0', license: '(not declared)', url: 'https://crates.io/crates/itoa', texts: [] },
+    { name: 'serde', version: '1.0.0', license: 'MIT', url: 'https://github.com/serde-rs/serde', texts: [] },
   ])
+})
+
+test('a crate carries the license texts in its folder, and the workspace’s own crates are left out', () => {
+  const dir = scratch()
+  const folder = (name, files) => {
+    mkdirSync(join(dir, name), { recursive: true })
+    for (const [file, text] of Object.entries(files)) writeFileSync(join(dir, name, file), text)
+    return join(dir, name, 'Cargo.toml')
+  }
+  const pkg = (name, manifest, extra = {}) => ({ id: name, name, version: '1.0.0', license: 'MIT OR Apache-2.0', manifest_path: manifest, ...extra })
+  const dep = (name) => ({ pkg: name, dep_kinds: [{ kind: null }] })
+  const metadata = {
+    workspace_members: ['app', 'app-core'],
+    packages: [
+      pkg('app', folder('app', {})),
+      pkg('app-core', folder('app-core', { LICENSE: 'own code' })),
+      pkg('dual', folder('dual', { 'LICENSE-MIT': 'Copyright (c) Dual\r\n\r\nPermission …\r\n', 'LICENSE-APACHE': 'Apache License' })),
+      pkg('odd', folder('odd', { 'TERMS.txt': 'Copyright (c) Odd' }), { license: null, license_file: 'TERMS.txt' }),
+      pkg('bare', folder('bare', {})),
+    ],
+    resolve: {
+      root: 'app',
+      nodes: [
+        { id: 'app', deps: [dep('app-core'), dep('dual')] },
+        { id: 'app-core', deps: [dep('odd'), dep('bare')] },
+      ],
+    },
+  }
+  const packages = cargoPackages({ cwd: '.', target: 'x86_64-pc-windows-msvc', metadata })
+  assert.deepEqual(packages.map((p) => p.name), ['bare', 'dual', 'odd'])
+  assert.deepEqual(packages.find((p) => p.name === 'dual').texts, ['Apache License', 'Copyright (c) Dual\n\nPermission …'])
+  assert.deepEqual(packages.find((p) => p.name === 'odd').texts, ['Copyright (c) Odd'])
+  assert.deepEqual(withoutText(packages).map((p) => p.name), ['bare'])
 })
 
 test('the npm closure leaves out dev dependencies and links, and fills in from installed manifests', () => {
@@ -78,14 +113,16 @@ test('the npm closure leaves out dev dependencies and links, and fills in from i
     join(dir, 'node_modules', 'a', 'package.json'),
     JSON.stringify({ license: 'BSD-3-Clause', repository: { url: 'git+https://github.com/x/a.git' } }),
   )
+  writeFileSync(join(dir, 'node_modules', 'a', 'LICENSE.md'), 'Copyright (c) A\n')
   const installed = npmPackages({ lock: join(dir, 'package-lock.json'), installedAt: dir })
   assert.deepEqual(installed, [
-    { name: '@scope/c', version: '3.0.0', license: 'MIT', url: 'https://www.npmjs.com/package/@scope/c' },
-    { name: 'a', version: '1.0.0', license: 'BSD-3-Clause', url: 'https://github.com/x/a' },
-    { name: 'b', version: '2.0.0', license: 'ISC', url: 'https://www.npmjs.com/package/b' },
+    { name: '@scope/c', version: '3.0.0', license: 'MIT', url: 'https://www.npmjs.com/package/@scope/c', texts: [] },
+    { name: 'a', version: '1.0.0', license: 'BSD-3-Clause', url: 'https://github.com/x/a', texts: ['Copyright (c) A'] },
+    { name: 'b', version: '2.0.0', license: 'ISC', url: 'https://www.npmjs.com/package/b', texts: [] },
   ])
   const lockOnly = npmPackages({ lock: join(dir, 'package-lock.json') })
   assert.equal(lockOnly.find((p) => p.name === 'a').license, '(not declared)')
+  assert.deepEqual(lockOnly.find((p) => p.name === 'a').texts, [])
 })
 
 test('NuGet packages count only when they put assets into the build', () => {
@@ -98,6 +135,9 @@ test('NuGet packages count only when they put assets into the build', () => {
   nuspec('lib.a', '1.0.0', '<license type="expression">MIT</license><repository type="git" url="https://github.com/x/a.git" />')
   nuspec('lib.b', '2.0.0', '<license type="file">LICENSE.txt</license>')
   writeFileSync(join(folder, 'lib.b', '2.0.0', 'LICENSE.txt'), 'MIT License\n\nCopyright …')
+  writeFileSync(join(folder, 'lib.b', '2.0.0', 'NOTICE'), 'not the file the nuspec names')
+  writeFileSync(join(folder, 'lib.a', '1.0.0', 'LICENSE.txt'), 'Copyright (c) A')
+  writeFileSync(join(folder, 'lib.a', '1.0.0', 'THIRD-PARTY-NOTICES.txt'), 'notices of what it bundles')
   nuspec('lib.c', '3.0.0', '<licenseUrl>https://example.com/license</licenseUrl>')
   writeFileSync(
     join(dir, 'project.assets.json'),
@@ -116,9 +156,9 @@ test('NuGet packages count only when they put assets into the build', () => {
     }),
   )
   assert.deepEqual(nugetPackages({ assets: join(dir, 'project.assets.json') }), [
-    { name: 'Lib.A', version: '1.0.0', license: 'MIT', url: 'https://github.com/x/a' },
-    { name: 'Lib.B', version: '2.0.0', license: 'MIT', url: 'https://www.nuget.org/packages/Lib.B' },
-    { name: 'Lib.C', version: '3.0.0', license: 'see https://example.com/license', url: 'https://www.nuget.org/packages/Lib.C' },
+    { name: 'Lib.A', version: '1.0.0', license: 'MIT', url: 'https://github.com/x/a', texts: ['Copyright (c) A'] },
+    { name: 'Lib.B', version: '2.0.0', license: 'MIT', url: 'https://www.nuget.org/packages/Lib.B', texts: ['MIT License\n\nCopyright …'] },
+    { name: 'Lib.C', version: '3.0.0', license: 'see https://example.com/license', url: 'https://www.nuget.org/packages/Lib.C', texts: [] },
   ])
   assert.throws(() => nugetPackages({ assets: join(dir, 'missing.json') }), /dotnet restore/)
 })
@@ -128,6 +168,22 @@ test('a table has one row per package', () => {
     noticesTable([{ name: 'a', version: '1', license: 'MIT', url: 'https://x' }]),
     '| Component | Version | License | Upstream |\n| --- | --- | --- | --- |\n| `a` | 1 | MIT | https://x |',
   )
+})
+
+test('a notices document keeps every text whole and prints a shared one once', () => {
+  const mit = (holder) => `Copyright (c) ${holder}\n\nPermission is hereby granted …`
+  const doc = noticesText([
+    { name: 'a', version: '1', license: 'MIT', url: 'https://a', texts: [mit('A')] },
+    { name: 'b', version: '2', license: 'MIT', url: 'https://b', texts: [mit('B')] },
+    { name: 'c', version: '3', license: 'MIT', url: 'https://c', texts: [mit('A')] },
+    { name: 'd', version: '4', license: 'ISC', url: 'https://d', texts: [] },
+  ])
+  assert.match(doc, /^Third-party notices\n=+\n\nThis program includes the following 4 third-party packages\./)
+  assert.equal(doc.split(mit('A')).length - 1, 1)
+  assert.equal(doc.split(mit('B')).length - 1, 1)
+  assert.match(doc, /c 3\nLicense: MIT\nUpstream: https:\/\/c\n\nSame license text as a 1\./)
+  assert.match(doc, /d 4\nLicense: ISC\nUpstream: https:\/\/d\n/)
+  assert.match(noticesText([], { title: 'Notices' }), /^Notices\n=======\n/)
 })
 
 test('writeOrCheck writes, then reports whether the file still matches', () => {

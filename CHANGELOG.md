@@ -10,14 +10,24 @@
   it used to type after it.
 - `App.launch` constructs the class it is called on, so an app's own subclass of `App` (with its own
   steps — open a document, pick a tab) launches and restarts as that subclass.
+- `notices`: `cargoPackages` leaves out the other members of the package's workspace as well as the
+  package itself — they are the app's own code, not third-party packages.
 
 ### Added
+
+- `notices`: every reader also returns `texts`, the license texts the package itself carries
+  (LICENSE, LICENSE-MIT, COPYING, NOTICE and the like, or the file a nuspec names) — from the crate's
+  folder, the installed npm package (`installedAt`), or the NuGet package folder. Most permissive
+  licenses make keeping that text, copyright line included, the condition itself, so an identifier
+  alone does not meet them. `withoutText(packages)` lists the packages that carry none, for a gate to
+  stop on; `noticesText(packages, { title })` renders a plain-text document with every text, printing
+  a text several packages share word for word once and referring to it from the others;
+  `licenseTexts(dir)` reads a folder's texts.
 
 - `App.launch({ webviewProfile })` and `webviewGone(profile)`: `quit` also waits until the app's WebView2
   processes — found by the identifier in their command line — have exited, ending leftovers after a
   grace period. A window started while the last one's browser is still shutting down on the same
   profile never opens its debugging port; the port going quiet comes before that.
-
 - `@iyulab/tauri-kit-dev/provenance`: say which source a built helper was made from, so checks
   that run it test what they mean to. `gitSourceState(cwd, folder)` gives a folder's committed tree,
   the commit, and a digest of anything uncommitted in it (`pendingDigest`); `filesDigest` and
