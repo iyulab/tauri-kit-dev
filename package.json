@@ -31,6 +31,7 @@
     "./machine": "./src/machine.js",
     "./notices": "./src/notices.js",
     "./pin-drift": "./src/pin-drift.js",
+    "./provenance": "./src/provenance.js",
     "./public-text": "./src/public-text.js",
     "./sandbox": "./src/sandbox.js"
   },

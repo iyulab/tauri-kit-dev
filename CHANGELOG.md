@@ -4,6 +4,13 @@
 
 ### Added
 
+- `@iyulab/tauri-kit-dev/provenance`: say which source a built helper was made from, so checks
+  that run it test what they mean to. `gitSourceState(cwd, folder)` gives a folder's committed tree,
+  the commit, and a digest of anything uncommitted in it (`pendingDigest`); `filesDigest` and
+  `filesUnder` digest an installed payload wherever it lives. `writeStamp`/`readStamp` keep a flat
+  JSON record the app shapes, and `judgeStamp(record, { digestKey, digest, expected })` answers
+  `unknown` (no stamp, or the output is not the one stamped), `match` or `differs` — a field an
+  older stamp never recorded never matches.
 - `@iyulab/tauri-kit-dev/pin-drift` and `tauri-kit-dev pin-drift`: NuGet pins of one publisher's
   packages in a `Directory.Packages.props`, against the newest versions on nuget.org. Which
   packages count is read from the restored graph — those whose own nuspec names the publisher among
