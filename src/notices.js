@@ -20,14 +20,16 @@
 // `texts` holds the license texts the package itself carries (LICENSE, LICENSE-MIT, COPYING, NOTICE,
 // or the file a nuspec names). Most permissive licenses make keeping that text — with its copyright
 // line — the condition itself, so an identifier alone does not satisfy them: `withoutText` lists the
-// packages that carry none, and `noticesText` renders a document that includes every text.
+// packages that carry none, `applyPinned` fills those in from texts pinned at the same version of
+// their source, and `noticesText` renders a document that includes every text.
 
 import { execFileSync } from 'node:child_process'
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 /**
- * @typedef {{ name: string, version: string, license: string, url: string, texts: string[] }} Package
+ * @typedef {{ name: string, version: string, license: string, url: string, texts: string[], textSource?: string }} Package
  */
 
 const LICENSE_FILE = /^(?:licen[cs]e|copying|notice)(?:[-._].*)?$/i
@@ -279,6 +281,7 @@ export function noticesText(packages, { title = 'Third-party notices' } = {}) {
   const out = [title, '='.repeat(title.length), '', `This program includes the following ${packages.length} third-party packages.`, '']
   for (const p of packages) {
     out.push(rule, `${p.name} ${p.version}`, `License: ${p.license}`, `Upstream: ${p.url}`)
+    if (p.textSource) out.push(`License text from: ${p.textSource}`)
     for (const t of p.texts ?? []) {
       if (firstAt.has(t)) {
         out.push('', `Same license text as ${firstAt.get(t)}.`)
@@ -290,6 +293,104 @@ export function noticesText(packages, { title = 'Third-party notices' } = {}) {
     out.push('')
   }
   return out.join('\n')
+}
+
+// Pinned license texts — for a package that ships without its license text.
+//
+// Plenty of packages declare a license but leave its text out of what they publish. The text then
+// has to come from the package's source at that same version, and it has to stay that text: a pin
+// names the exact file (a URL that fixes the version — a tag or a commit, not a branch) and its
+// SHA-256, and the text itself is committed next to the pins. Generating notices reads only those
+// committed files and checks every digest, so the output never depends on the network and a check
+// in CI gives the same answer as on a laptop. Fetching is a separate, deliberate step
+// (`fetchPinned`), the way a lockfile is written by an install and only read by a build.
+//
+// A pin is keyed by `name@version`. When a package moves to another version its pin no longer
+// applies, the package is without text again, and a gate on `withoutText` stops until the new
+// version is pinned — on purpose, since the text can change between versions.
+
+/**
+ * @typedef {{ source: string, sha256?: string }} Pin
+ */
+
+const pinPath = (dir, key) => join(dir, `${key.replace(/[\\/:*?"<>|]/g, '_')}.txt`)
+const digest = (bytes) => createHash('sha256').update(bytes).digest('hex')
+
+/** @param {string | Record<string, Pin>} pins a pins JSON file, or its contents */
+const pinTable = (pins) => (typeof pins === 'string' ? (existsSync(pins) ? JSON.parse(readFileSync(pins, 'utf8')) : {}) : pins)
+
+/**
+ * Fills in the texts of packages that carry none from pinned, committed files.
+ *
+ * Returns the packages (a filled one also gets `textSource`, the pin's URL), the pins that applied
+ * to nothing (`unused` — a package moved to another version, left the graph, or now carries its own
+ * text), and the pins that could not be applied (`problems` — the file is missing, or its digest is
+ * not the pinned one). A package with a problem keeps no text, so `withoutText` still lists it.
+ *
+ * @param {Package[]} packages
+ * @param {{ pins: string | Record<string, Pin>, dir: string }} options `dir` holds one file per pin
+ * @returns {{ packages: Package[], unused: string[], problems: { key: string, problem: string }[] }}
+ */
+export function applyPinned(packages, { pins, dir }) {
+  const table = pinTable(pins)
+  const applied = new Set()
+  const problems = []
+  const filled = packages.map((p) => {
+    const key = `${p.name}@${p.version}`
+    const pin = table[key]
+    if (!pin || p.texts?.length) return p
+    const file = pinPath(dir, key)
+    if (!existsSync(file)) {
+      problems.push({ key, problem: `${file} is missing — fetch the pinned texts` })
+      return p
+    }
+    const bytes = readFileSync(file)
+    if (!pin.sha256 || digest(bytes) !== pin.sha256) {
+      problems.push({ key, problem: pin.sha256 ? `${file} is not the pinned text (SHA-256 differs)` : 'the pin has no SHA-256 — fetch the pinned texts' })
+      return p
+    }
+    applied.add(key)
+    return { ...p, texts: [bytes.toString('utf8').replace(/\r\n/g, '\n').trim()], textSource: pin.source }
+  })
+  const unused = Object.keys(table).filter((key) => !applied.has(key) && !problems.some((x) => x.key === key))
+  return { packages: filled, unused, problems }
+}
+
+/**
+ * Downloads the pinned texts into `dir`. A pin without a SHA-256 is fetched and gets one — written
+ * back when `pins` is a file — so pinning starts with `{ source }` alone and the digest records what
+ * was seen then. A pin with a SHA-256 is fetched only when its file is missing or differs, and a
+ * download that does not match the pinned digest is an error: the source changed under the pin.
+ *
+ * @param {{ pins: string | Record<string, Pin>, dir: string, fetch?: typeof globalThis.fetch }} options
+ * @returns {Promise<{ fetched: string[], pinned: string[] }>} `pinned` lists the pins that got a digest
+ */
+export async function fetchPinned({ pins, dir, fetch = globalThis.fetch }) {
+  const table = pinTable(pins)
+  mkdirSync(dir, { recursive: true })
+  const fetched = []
+  const pinned = []
+  try {
+    for (const [key, pin] of Object.entries(table)) {
+      const file = pinPath(dir, key)
+      if (pin.sha256 && existsSync(file) && digest(readFileSync(file)) === pin.sha256) continue
+      const response = await fetch(pin.source)
+      if (!response.ok) throw new Error(`${key}: ${pin.source} answered ${response.status}`)
+      const bytes = Buffer.from(await response.arrayBuffer())
+      const got = digest(bytes)
+      if (pin.sha256 && got !== pin.sha256) throw new Error(`${key}: ${pin.source} is not the pinned text (SHA-256 ${got}, pinned ${pin.sha256})`)
+      if (!pin.sha256) {
+        pin.sha256 = got
+        pinned.push(key)
+      }
+      writeFileSync(file, bytes)
+      fetched.push(key)
+    }
+  } finally {
+    // The texts fetched before a failure keep their digests.
+    if (pinned.length && typeof pins === 'string') writeFileSync(pins, `${JSON.stringify(table, null, 2)}\n`)
+  }
+  return { fetched, pinned }
 }
 
 /**

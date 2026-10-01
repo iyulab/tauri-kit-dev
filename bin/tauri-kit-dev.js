@@ -13,6 +13,11 @@
 //       fails unless a waiver with an unexpired date covers it. --assets is the restored
 //       project.assets.json; --waivers a JSON list of { package, until, reason }. Exits 1 on drift.
 //
+//   notice-pins --pins <file> --dir <dir>
+//       Downloads the pinned license texts (see applyPinned in src/notices.js) into --dir. A pin
+//       given only its source gets the SHA-256 of what was downloaded, written back to --pins; a
+//       pinned text whose source no longer matches its SHA-256 is an error. Exits 2 on an error.
+//
 //   public-text [--config <file>] [--history] [<repo>...]
 //       Checks git repositories (default: the current one) for text a public repository must not
 //       carry. --config names a module exporting { forbidden, allowed, defaults, binary } — see
@@ -32,6 +37,7 @@ import { readFileSync } from 'node:fs'
 import { relative } from 'node:path'
 import { parseArgs } from '../src/args.js'
 import { loadGateConfig, runGate } from '../src/gate.js'
+import { fetchPinned } from '../src/notices.js'
 import { checkPinDrift, formatLine } from '../src/pin-drift.js'
 import { checkMachine } from '../src/machine.js'
 import { checkRepo, loadConfig } from '../src/public-text.js'
@@ -39,6 +45,7 @@ import { runInSandbox } from '../src/sandbox.js'
 
 const USAGE = `usage: tauri-kit-dev gate --config <file> [--list] [--only a,b] [--skip c] [--<flag>]
        tauri-kit-dev pin-drift --props <file> --assets <file> --publisher <name> [--max-minor-gap <n>] [--waivers <file>]
+       tauri-kit-dev notice-pins --pins <file> --dir <dir>
        tauri-kit-dev public-text [--config <file>] [--history] [<repo>...]
        tauri-kit-dev machine [--dotnet]
        tauri-kit-dev sandbox <installer> --exe <file> [--identifier <id>] [--extra <script>] [--without-webview2] [--prepare]`
@@ -71,6 +78,17 @@ ${report.failures} package(s) drifted past the threshold (major difference or mo
   }
   console.log(`
 Pin drift within threshold: ${report.pinned} pinned, ${report.transitive} transitive.`)
+  return 0
+}
+
+async function noticePins(argv) {
+  const args = parseArgs(argv, { options: ['--pins', '--dir'] })
+  const { '--pins': pins, '--dir': dir } = args.options
+  if (!pins || !dir) throw new Error(`--pins and --dir are required
+${USAGE}`)
+  const { fetched, pinned } = await fetchPinned({ pins, dir })
+  for (const key of pinned) console.log(`  + ${key} pinned`)
+  console.log(`${fetched.length} pinned text(s) fetched into ${dir}.`)
   return 0
 }
 
@@ -132,7 +150,7 @@ async function sandbox(argv) {
   return 0
 }
 
-const commands = { gate, 'pin-drift': pinDrift, 'public-text': publicText, machine, sandbox }
+const commands = { gate, 'notice-pins': noticePins, 'pin-drift': pinDrift, 'public-text': publicText, machine, sandbox }
 
 async function main([command, ...rest]) {
   const run = commands[command]

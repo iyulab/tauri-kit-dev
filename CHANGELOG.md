@@ -23,6 +23,15 @@
   stop on; `noticesText(packages, { title })` renders a plain-text document with every text, printing
   a text several packages share word for word once and referring to it from the others;
   `licenseTexts(dir)` reads a folder's texts.
+- `notices`: pinned license texts, for a package that publishes without its text.
+  `applyPinned(packages, { pins, dir })` fills such packages in from committed files, keyed
+  `name@version` in a pins JSON of `{ source, sha256 }`, and checks every digest — no network, so a
+  check gives the same answer everywhere. It reports the pins that applied to nothing (a moved
+  version, a package now carrying its own text) and the ones that could not be applied (file
+  missing, digest differs); a filled package gets `textSource`, which `noticesText` prints.
+  `fetchPinned({ pins, dir })` and `tauri-kit-dev notice-pins --pins <file> --dir <dir>` download the
+  texts, record the SHA-256 of a pin given only its source, and refuse a source that no longer
+  matches its pin.
 
 - `App.launch({ webviewProfile })` and `webviewGone(profile)`: `quit` also waits until the app's WebView2
   processes — found by the identifier in their command line — have exited, ending leftovers after a

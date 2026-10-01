@@ -1,10 +1,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   PERMISSIVE,
+  applyPinned,
+  fetchPinned,
   cargoPackages,
   isAccepted,
   licenseIdentifiers,
@@ -184,6 +186,60 @@ test('a notices document keeps every text whole and prints a shared one once', (
   assert.match(doc, /c 3\nLicense: MIT\nUpstream: https:\/\/c\n\nSame license text as a 1\./)
   assert.match(doc, /d 4\nLicense: ISC\nUpstream: https:\/\/d\n/)
   assert.match(noticesText([], { title: 'Notices' }), /^Notices\n=======\n/)
+})
+
+test('pinned texts fill in packages without one, only when the committed file is the pinned text', async () => {
+  const dir = scratch()
+  const texts = join(dir, 'texts')
+  const pinsFile = join(dir, 'pins.json')
+  const served = {
+    'https://src/a/v1/LICENSE': 'Copyright (c) A\r\n\r\nPermission …\r\n',
+    'https://src/@s/b/v2/LICENSE': 'Copyright (c) B',
+  }
+  const fetch = async (url) => (url in served ? new Response(served[url]) : new Response('gone', { status: 404 }))
+  writeFileSync(
+    pinsFile,
+    JSON.stringify({
+      'a@1.0.0': { source: 'https://src/a/v1/LICENSE' },
+      '@s/b@2.0.0': { source: 'https://src/@s/b/v2/LICENSE' },
+      'gone@0.1.0': { source: 'https://src/gone/LICENSE' },
+    }),
+  )
+  await assert.rejects(fetchPinned({ pins: pinsFile, dir: texts, fetch }), /gone@0\.1\.0: https:\/\/src\/gone\/LICENSE answered 404/)
+  const pins = JSON.parse(readFileSync(pinsFile, 'utf8'))
+  assert.match(pins['a@1.0.0'].sha256, /^[0-9a-f]{64}$/, 'texts fetched before the failure keep their digests')
+  delete pins['gone@0.1.0']
+  delete pins['@s/b@2.0.0'].sha256
+  writeFileSync(pinsFile, JSON.stringify(pins))
+  assert.deepEqual(await fetchPinned({ pins: pinsFile, dir: texts, fetch }), { fetched: ['@s/b@2.0.0'], pinned: ['@s/b@2.0.0'] })
+  const recorded = JSON.parse(readFileSync(pinsFile, 'utf8'))
+  assert.match(recorded['@s/b@2.0.0'].sha256, /^[0-9a-f]{64}$/)
+  assert.deepEqual(await fetchPinned({ pins: pinsFile, dir: texts, fetch }), { fetched: [], pinned: [] })
+
+  const pkg = (name, version, texts = []) => ({ name, version, license: 'MIT', url: `https://${name}`, texts })
+  const result = applyPinned([pkg('a', '1.0.0'), pkg('@s/b', '2.0.0', ['own text']), pkg('c', '3.0.0')], { pins: pinsFile, dir: texts })
+  assert.deepEqual(result.packages[0], { ...pkg('a', '1.0.0'), texts: ['Copyright (c) A\n\nPermission …'], textSource: 'https://src/a/v1/LICENSE' })
+  assert.deepEqual(result.packages[1].texts, ['own text'])
+  assert.deepEqual(withoutText(result.packages).map((p) => p.name), ['c'])
+  assert.deepEqual(result.unused, ['@s/b@2.0.0'])
+  assert.deepEqual(result.problems, [])
+  assert.match(noticesText(result.packages), /a 1\.0\.0\nLicense: MIT\nUpstream: https:\/\/a\nLicense text from: https:\/\/src\/a\/v1\/LICENSE\n\nCopyright \(c\) A/)
+
+  // a moved version no longer matches its pin
+  assert.deepEqual(applyPinned([pkg('a', '1.0.1')], { pins: pinsFile, dir: texts }).unused, ['a@1.0.0', '@s/b@2.0.0'])
+
+  // a file edited by hand is not the pinned text
+  const edited = readdirSync(texts).find((f) => f.startsWith('a@'))
+  writeFileSync(join(texts, edited), 'something else')
+  const tampered = applyPinned([pkg('a', '1.0.0')], { pins: pinsFile, dir: texts })
+  assert.deepEqual(withoutText(tampered.packages).map((p) => p.name), ['a'])
+  assert.match(tampered.problems[0].problem, /SHA-256 differs/)
+  assert.deepEqual(await fetchPinned({ pins: pinsFile, dir: texts, fetch }), { fetched: ['a@1.0.0'], pinned: [] })
+
+  // the source changing under a pin is an error, not a silent update
+  served['https://src/a/v1/LICENSE'] = 'Copyright (c) Someone else'
+  writeFileSync(join(texts, edited), 'something else')
+  await assert.rejects(fetchPinned({ pins: pinsFile, dir: texts, fetch }), /a@1\.0\.0: .* is not the pinned text/)
 })
 
 test('writeOrCheck writes, then reports whether the file still matches', () => {
