@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-01
+
 ### Fixed
 
 - `public-text` checks files whose path holds characters outside ASCII. git quoted those paths in its
@@ -72,6 +74,11 @@
   steps. `--list`, `--only a,b` and `--skip c` choose steps; an unknown name is an error.
   `preflight(selected)` can refuse to start with a message, for a failure the app can see coming
   that a step's own output would not explain. Exit codes: 0 green, 1 failed, 2 did not start.
+
+## [0.1.0] - 2026-10-01
+
+### Added
+
 - `@iyulab/tauri-kit-dev/cdp`: a Chrome DevTools Protocol client for a WebView2 window —
   `findPage`, `portAnswers`, and `Cdp` with `evaluate`, `waitFor`, `insertText`, `press`,
   `clickAt` and `screenshot`. No dependencies; uses Node's built-in WebSocket.
