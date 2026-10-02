@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-02
+
 ### Fixed
 
 - `installer`: `downloadInstaller` takes the installer of the tag's version when the release also
