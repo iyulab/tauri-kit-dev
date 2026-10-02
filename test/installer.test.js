@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { join } from 'node:path'
-import { nsisArgs, pickInstaller, pickUpgradeFrom, profileSnapshots } from '../src/installer.js'
+import { nsisArgs, pickInstaller, pickReleaseInstaller, pickUpgradeFrom, profileSnapshots } from '../src/installer.js'
 
 test('NSIS: silent, and the folder last and unquoted', () => {
   assert.deepEqual(nsisArgs('C:\\Temp\\my app'), ['/S', '/D=C:\\Temp\\my app'])
@@ -28,4 +28,19 @@ test('the version to update from: the newest published one that is not this one'
 
 test('profile snapshots sit under the web view folder of the app data', () => {
   assert.equal(profileSnapshots(join('data', 'com.example.app')), join('data', 'com.example.app', 'EBWebView', 'Snapshots'))
+})
+
+test('picks the installer of a release that also carries a copy without the version', () => {
+  const files = ['App_0.1.7_x64-setup.exe', 'App_x64-setup.exe', 'App_0.1.7_x64-offline-setup.exe', 'App_x64-offline-setup.exe']
+  assert.equal(pickReleaseInstaller(files, { tag: 'v0.1.7' }), 'App_0.1.7_x64-setup.exe')
+  assert.equal(pickReleaseInstaller(files, { tag: 'v0.1.7', pattern: '*_x64-offline-setup.exe' }), 'App_0.1.7_x64-offline-setup.exe')
+})
+
+test('a release with one installer is picked whatever it is named', () => {
+  assert.equal(pickReleaseInstaller(['App_x64-setup.exe', 'latest.json'], { tag: 'v2.0.0' }), 'App_x64-setup.exe')
+})
+
+test('no installer, or several of the same version, is not a pick', () => {
+  assert.equal(pickReleaseInstaller(['latest.json'], { tag: 'v0.1.7' }), null)
+  assert.equal(pickReleaseInstaller(['A_0.1.7_x64-setup.exe', 'B_0.1.7_x64-setup.exe'], { tag: 'v0.1.7' }), null)
 })

@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `installer`: `downloadInstaller` takes the installer of the tag's version when the release also
+  carries a copy of it under a name without the version (a link that always reaches the latest
+  installer). Both ended like the pattern, so it found two and failed. The choice is exported as
+  `pickReleaseInstaller(files, { tag, pattern })`.
+
 ## [0.3.0] - 2026-10-02
 
 ### Added

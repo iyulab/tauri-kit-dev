@@ -126,13 +126,26 @@ export async function withInstalled(installer, body, { exe, prefix = 'tauri-app-
   }
 }
 
+/**
+ * Which of the files a release download left in a folder is the installer of `tag`: the one file
+ * ending like `pattern`, or — when the release also carries a copy under a name without the version
+ * (kept for a link that always reaches the latest installer) — the one naming the tag's version, as
+ * the bundler names it (`<product>_<version>_x64-setup.exe`). Null when that is still not one file.
+ */
+export function pickReleaseInstaller(files, { tag, pattern = '*_x64-setup.exe' }) {
+  const suffix = pattern.replace(/^\*/, '')
+  const found = files.filter((f) => f.endsWith(suffix))
+  if (found.length === 1) return found[0]
+  const versioned = found.filter((f) => f.includes(`_${tag.replace(/^v/, '')}_`))
+  return versioned.length === 1 ? versioned[0] : null
+}
+
 /** Downloads the published installer of `tag` into `dir` and answers its path. */
 export async function downloadInstaller({ repo, tag, dir, pattern = '*_x64-setup.exe' }) {
   gh(['release', 'download', tag, '-R', repo, '--pattern', pattern, '--dir', dir])
-  const suffix = pattern.replace(/^\*/, '')
-  const found = (await readdir(dir)).filter((f) => f.endsWith(suffix))
-  if (found.length !== 1) throw new Error(`release ${tag} of ${repo} has no single ${pattern}`)
-  return join(dir, found[0])
+  const found = pickReleaseInstaller(await readdir(dir), { tag, pattern })
+  if (!found) throw new Error(`release ${tag} of ${repo} has no single ${pattern}`)
+  return join(dir, found)
 }
 
 /** The published releases of `repo` (drafts left out), in no particular order. */
