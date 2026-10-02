@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-02
+
 ### Added
 
 - `public-text`: a line marked `public-text: allow` — on the line itself or the line just above it,
