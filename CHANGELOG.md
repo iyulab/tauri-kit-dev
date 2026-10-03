@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `notices`: a .NET helper published self-contained or ahead of time ships the runtime of each
+  framework it references, and its notices left that out — the restore records the runtime packs
+  (`Microsoft.NETCore.App.Runtime.<rid>`, `Microsoft.AspNetCore.App.Runtime.<rid>`, the
+  `NativeAOT` pack) apart from the project's packages. `nugetPackages` now includes the runtime packs
+  of the frameworks the project references; a pack of a framework it does not reference, and the
+  ahead-of-time compiler, stay out.
+- `notices`: a package's notices for the third-party code it bundles (`THIRD-PARTY-NOTICES`,
+  `ThirdPartyNotices`) are among its texts, after its license — that code ships inside the
+  package's files. The .NET runtime packs carry theirs this way.
+
 ## [0.4.0] - 2026-10-03
 
 ### Added

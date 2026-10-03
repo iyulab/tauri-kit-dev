@@ -131,7 +131,9 @@ npx tauri-kit-dev notices --config notices.config.js [--strict] [--check]
 Writes the notices an installer ships next to the app: every package the app's package managers
 say it ships — the web UI's npm packages, the shell's crates, a bundled .NET helper's NuGet
 packages — with the license texts each carries, or the text pinned for one that publishes without
-it. The config names where each is described, relative to its own folder:
+it. A self-contained or ahead-of-time .NET helper also lists the runtime packs of the frameworks it
+references, and a package's notices for the third-party code it bundles come after its license.
+The config names where each is described, relative to its own folder:
 
 ```js
 // notices.config.js

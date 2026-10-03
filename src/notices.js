@@ -14,11 +14,14 @@
 //     the production closure, whose code is bundled into the web assets or a bundled helper.
 //   - NuGet (`nugetPackages`): the packages of a restored .NET project (`project.assets.json`)
 //     that put runtime or native assets into the build — for a bundled .NET helper. Meta-packages
-//     and analyzers carry none.
+//     and analyzers carry none. A helper published self-contained or ahead of time also carries the
+//     runtime of each framework it references: the runtime packs the restore downloaded for it.
 //
 // Every reader returns `{ name, version, license, url, texts }`, sorted by name and version.
 // `texts` holds the license texts the package itself carries (LICENSE, LICENSE-MIT, COPYING, NOTICE,
-// or the file a nuspec names). Most permissive licenses make keeping that text — with its copyright
+// or the file a nuspec names), then the notices of the third-party code it bundles
+// (THIRD-PARTY-NOTICES, ThirdPartyNotices) — that code ships inside the package's files, so its
+// notices ship with them. Most permissive licenses make keeping that text — with its copyright
 // line — the condition itself, so an identifier alone does not satisfy them: `withoutText` lists the
 // packages that carry none, `applyPinned` fills those in from texts pinned at the same version of
 // their source, and `noticesText` renders a document that includes every text.
@@ -33,22 +36,29 @@ import { dirname, join } from 'node:path'
  */
 
 const LICENSE_FILE = /^(?:licen[cs]e|copying|notice)(?:[-._].*)?$/i
+const THIRD_PARTY_FILE = /^third[-_ ]?party[-_ ]?notices?(?:[-._].*)?$/i
+
+/** The texts of the files in `dir` whose names `pattern` matches, in file name order, trimmed. */
+const textsMatching = (dir, pattern) =>
+  !dir || !existsSync(dir)
+    ? []
+    : readdirSync(dir, { withFileTypes: true })
+        .filter((e) => e.isFile() && pattern.test(e.name))
+        .map((e) => e.name)
+        .sort()
+        .map((name) => readText(join(dir, name)))
+        .filter(Boolean)
 
 /**
  * The license texts a package folder carries — LICENSE, LICENSE-MIT, LICENSE.txt, COPYING, NOTICE and
- * the like — in file name order, trimmed. A missing folder carries none.
+ * the like — then the notices of the third-party code it bundles (THIRD-PARTY-NOTICES,
+ * ThirdPartyNotices), each in file name order, trimmed. A missing folder carries none.
  *
  * @param {string} dir
  * @returns {string[]}
  */
 export function licenseTexts(dir) {
-  if (!dir || !existsSync(dir)) return []
-  return readdirSync(dir, { withFileTypes: true })
-    .filter((e) => e.isFile() && LICENSE_FILE.test(e.name))
-    .map((e) => e.name)
-    .sort()
-    .map((name) => readText(join(dir, name)))
-    .filter(Boolean)
+  return [...textsMatching(dir, LICENSE_FILE), ...textsMatching(dir, THIRD_PARTY_FILE)]
 }
 
 const readText = (path) => readFileSync(path, 'utf8').replace(/\r\n/g, '\n').trim()
@@ -213,8 +223,13 @@ export function licenseFromFile(path) {
 const hasFiles = (assets) => !!assets && Object.keys(assets).some((f) => !f.endsWith('_._'))
 
 /**
- * The NuGet packages of a restored project that put runtime or native assets into its build.
- * Licenses come from each package's own nuspec in the restore's package folder.
+ * The NuGet packages of a restored project that put runtime or native assets into its build, and
+ * the runtime packs of the frameworks it references — `Microsoft.NETCore.App.Runtime.<rid>`,
+ * `Microsoft.AspNetCore.App.Runtime.<rid>` and the like, whose code a self-contained or
+ * ahead-of-time publish puts into the helper. The restore downloads those for the project's runtime
+ * identifier and records them apart from its packages; a pack of a framework the project does not
+ * reference, and a build tool such as the ahead-of-time compiler, are left out. Licenses come from
+ * each package's own nuspec in the restore's package folder.
  *
  * @param {{ assets: string }} options the project's `obj/project.assets.json` — present only after
  *   `dotnet restore`
@@ -230,32 +245,48 @@ export function nugetPackages({ assets }) {
       if (lib.type !== 'package') continue
       if (!hasFiles(lib.runtime) && !hasFiles(lib.native) && !hasFiles(lib.runtimeTargets)) continue
       const [name, version] = key.split('/')
-      const id = name.toLowerCase()
-      const dir = join(folder, id, version.toLowerCase())
-      const nuspecPath = join(dir, `${id}.nuspec`)
-      const nuspec = existsSync(nuspecPath) ? readFileSync(nuspecPath, 'utf8') : ''
-      const expression = nuspec.match(/<license\s+type="expression"\s*>([^<]+)<\/license>/)?.[1]?.trim()
-      const licenseFile = nuspec.match(/<license\s+type="file"\s*>([^<]+)<\/license>/)?.[1]?.trim()
-      const licenseUrl = nuspec.match(/<licenseUrl>([^<]+)<\/licenseUrl>/)?.[1]?.trim()
-      const repo =
-        nuspec.match(/<repository\b[^>]*\burl="([^"]+)"/)?.[1] ?? nuspec.match(/<projectUrl>([^<]+)<\/projectUrl>/)?.[1]
-      packages.push({
-        name,
-        version,
-        license:
-          expression ??
-          (licenseFile
-            ? (licenseFromFile(join(dir, licenseFile)) ?? `see ${licenseFile} in the package`)
-            : licenseUrl
-              ? `see ${licenseUrl}`
-              : '(not declared)'),
-        url: (repo ?? `https://www.nuget.org/packages/${name}`).replace(/\.git$/, ''),
-        texts: licenseFile && existsSync(join(dir, licenseFile)) ? [readText(join(dir, licenseFile))] : licenseTexts(dir),
-      })
+      packages.push(nugetPackage(folder, name, version))
+    }
+  }
+  for (const framework of Object.values(parsed.project?.frameworks ?? {})) {
+    const runtimes = Object.keys(framework.frameworkReferences ?? {}).map((f) => `${f.toLowerCase()}.runtime.`)
+    for (const { name, version } of framework.downloadDependencies ?? []) {
+      if (!runtimes.some((prefix) => name.toLowerCase().startsWith(prefix))) continue
+      // A download dependency's version is an exact range: `[10.0.5, 10.0.5]`.
+      packages.push(nugetPackage(folder, name, version.replace(/^\[\s*([^,\]\s]+).*$/, '$1')))
     }
   }
   const unique = new Map(packages.map((p) => [`${p.name}@${p.version}`, p]))
   return [...unique.values()].sort(byNameThenVersion)
+}
+
+/** One package as its nuspec in the restore's package folder describes it. */
+function nugetPackage(folder, name, version) {
+  const id = name.toLowerCase()
+  const dir = join(folder, id, version.toLowerCase())
+  const nuspecPath = join(dir, `${id}.nuspec`)
+  const nuspec = existsSync(nuspecPath) ? readFileSync(nuspecPath, 'utf8') : ''
+  const expression = nuspec.match(/<license\s+type="expression"\s*>([^<]+)<\/license>/)?.[1]?.trim()
+  const licenseFile = nuspec.match(/<license\s+type="file"\s*>([^<]+)<\/license>/)?.[1]?.trim()
+  const licenseUrl = nuspec.match(/<licenseUrl>([^<]+)<\/licenseUrl>/)?.[1]?.trim()
+  const repo =
+    nuspec.match(/<repository\b[^>]*\burl="([^"]+)"/)?.[1] ?? nuspec.match(/<projectUrl>([^<]+)<\/projectUrl>/)?.[1]
+  return {
+    name,
+    version,
+    license:
+      expression ??
+      (licenseFile
+        ? (licenseFromFile(join(dir, licenseFile)) ?? `see ${licenseFile} in the package`)
+        : licenseUrl
+          ? `see ${licenseUrl}`
+          : '(not declared)'),
+    url: (repo ?? `https://www.nuget.org/packages/${name}`).replace(/\.git$/, ''),
+    texts:
+      licenseFile && existsSync(join(dir, licenseFile))
+        ? [readText(join(dir, licenseFile)), ...textsMatching(dir, THIRD_PARTY_FILE)]
+        : licenseTexts(dir),
+  }
 }
 
 /** A Markdown table of packages. @param {Package[]} packages */

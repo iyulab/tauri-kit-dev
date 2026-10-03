@@ -158,11 +158,50 @@ test('NuGet packages count only when they put assets into the build', () => {
     }),
   )
   assert.deepEqual(nugetPackages({ assets: join(dir, 'project.assets.json') }), [
-    { name: 'Lib.A', version: '1.0.0', license: 'MIT', url: 'https://github.com/x/a', texts: ['Copyright (c) A'] },
+    { name: 'Lib.A', version: '1.0.0', license: 'MIT', url: 'https://github.com/x/a', texts: ['Copyright (c) A', 'notices of what it bundles'] },
     { name: 'Lib.B', version: '2.0.0', license: 'MIT', url: 'https://www.nuget.org/packages/Lib.B', texts: ['MIT License\n\nCopyright …'] },
     { name: 'Lib.C', version: '3.0.0', license: 'see https://example.com/license', url: 'https://www.nuget.org/packages/Lib.C', texts: [] },
   ])
   assert.throws(() => nugetPackages({ assets: join(dir, 'missing.json') }), /dotnet restore/)
+})
+
+test('a self-contained helper carries the runtime packs of the frameworks it references', () => {
+  const dir = scratch()
+  const folder = join(dir, 'packages')
+  const pack = (id, files) => {
+    mkdirSync(join(folder, id, '10.0.5'), { recursive: true })
+    writeFileSync(join(folder, id, '10.0.5', `${id}.nuspec`), '<package><metadata><license type="expression">MIT</license></metadata></package>')
+    for (const [name, text] of Object.entries(files)) writeFileSync(join(folder, id, '10.0.5', name), text)
+  }
+  pack('microsoft.netcore.app.runtime.nativeaot.win-x64', { 'LICENSE.TXT': 'runtime license', 'THIRD-PARTY-NOTICES.TXT': 'runtime notices' })
+  pack('microsoft.aspnetcore.app.runtime.win-x64', { 'LICENSE.txt': 'web license', 'ThirdPartyNotices.txt': 'web notices' })
+  pack('microsoft.windowsdesktop.app.runtime.win-x64', { LICENSE: 'desktop license' })
+  pack('runtime.win-x64.microsoft.dotnet.ilcompiler', { 'THIRD-PARTY-NOTICES.TXT': 'compiler notices' })
+  const range = '[10.0.5, 10.0.5]'
+  writeFileSync(
+    join(dir, 'project.assets.json'),
+    JSON.stringify({
+      packageFolders: { [folder + '/']: {} },
+      targets: { 'net10.0': {}, 'net10.0/win-x64': {} },
+      project: {
+        frameworks: {
+          'net10.0': {
+            frameworkReferences: { 'Microsoft.AspNetCore.App': {}, 'Microsoft.NETCore.App': {} },
+            downloadDependencies: [
+              { name: 'Microsoft.AspNetCore.App.Runtime.win-x64', version: range },
+              { name: 'Microsoft.NETCore.App.Runtime.NativeAOT.win-x64', version: range },
+              { name: 'Microsoft.WindowsDesktop.App.Runtime.win-x64', version: range },
+              { name: 'runtime.win-x64.Microsoft.DotNet.ILCompiler', version: range },
+            ],
+          },
+        },
+      },
+    }),
+  )
+  assert.deepEqual(nugetPackages({ assets: join(dir, 'project.assets.json') }), [
+    { name: 'Microsoft.AspNetCore.App.Runtime.win-x64', version: '10.0.5', license: 'MIT', url: 'https://www.nuget.org/packages/Microsoft.AspNetCore.App.Runtime.win-x64', texts: ['web license', 'web notices'] },
+    { name: 'Microsoft.NETCore.App.Runtime.NativeAOT.win-x64', version: '10.0.5', license: 'MIT', url: 'https://www.nuget.org/packages/Microsoft.NETCore.App.Runtime.NativeAOT.win-x64', texts: ['runtime license', 'runtime notices'] },
+  ])
 })
 
 test('a table has one row per package', () => {
