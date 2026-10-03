@@ -144,11 +144,9 @@ async function noticePins(argv) {
     if (!sources.pinned || typeof sources.pinned.pins !== 'string') throw new Error(`${file} needs { pinned: { pins: '<file>', dir } }`)
     ;({ pins, dir } = sources.pinned)
     const { packages } = shippedNotices(sources)
-    const { pins: found, unresolved } = await suggestPins(packages)
-    if (Object.keys(found).length) {
-      const table = existsSync(pins) ? JSON.parse(readFileSync(pins, 'utf8')) : {}
-      writeFileSync(pins, `${JSON.stringify({ ...table, ...found }, null, 2)}\n`)
-    }
+    const table = existsSync(pins) ? JSON.parse(readFileSync(pins, 'utf8')) : {}
+    const { pins: found, unresolved } = await suggestPins(packages, { pinned: Object.keys(table) })
+    if (Object.keys(found).length) writeFileSync(pins, `${JSON.stringify({ ...table, ...found }, null, 2)}\n`)
     for (const [key, { source }] of Object.entries(found)) console.log(`  ? ${key} → ${source}`)
     for (const key of unresolved) console.warn(`  ✗ ${key}: no license file found at its version — pin it by hand`)
     if (Object.keys(found).length) console.log(`${Object.keys(found).length} pin(s) added to ${pins} — read the texts before committing them.`)

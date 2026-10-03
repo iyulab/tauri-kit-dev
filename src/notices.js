@@ -493,17 +493,22 @@ function sourceRefs(p) {
  * shipped — `{ "<name>@<version>": { source } }`, ready to merge into the pins and fetch with
  * `fetchPinned` — and lists the packages it found nothing for. A package's own folder in its
  * repository (`vcs.path`) is tried before the repository's root. The pins are suggestions: a
- * person still reads what was found before committing it.
+ * person still reads what was found before committing it. A package already pinned is never looked
+ * up again: when its pinned text is missing or no longer matches, that is the pin's failure to
+ * report, and a new suggestion would replace the pinned digest with whatever the source serves now.
  *
  * @param {Package[]} packages those without a text are looked up; the rest are skipped
- * @param {{ fetch?: typeof globalThis.fetch }} [options]
+ * @param {{ fetch?: typeof globalThis.fetch, pinned?: Iterable<string> }} [options] `pinned` — the
+ *   `name@version` keys the pins already hold
  * @returns {Promise<{ pins: Record<string, PinnedFile>, unresolved: string[] }>}
  */
-export async function suggestPins(packages, { fetch = globalThis.fetch } = {}) {
+export async function suggestPins(packages, { fetch = globalThis.fetch, pinned = [] } = {}) {
   const pins = {}
   const unresolved = []
+  const held = new Set(pinned)
   for (const p of withoutText(packages)) {
     const key = `${p.name}@${p.version}`
+    if (held.has(key)) continue
     const [, owner, repo] = p.url.match(GITHUB) ?? []
     let source = null
     if (owner) {

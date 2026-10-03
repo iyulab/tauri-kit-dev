@@ -10,7 +10,8 @@
   commit a package was published from is used when its published form records one (a crate's
   `.cargo_vcs_info.json`, a nuspec's `repository commit`, an npm manifest's `gitHead`), with the
   package's own folder in the repository tried before the root; otherwise its release tags. A branch
-  is never tried. GitHub sources only. Exported as `suggestPins(packages)`; the readers return the
+  is never tried, and a package already pinned is not looked up again — a pinned text that fails
+  stays a failure. GitHub sources only. Exported as `suggestPins(packages)`; the readers return the
   recorded commit and folder as `vcs`.
 
 ### Fixed

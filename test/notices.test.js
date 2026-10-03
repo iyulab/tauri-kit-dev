@@ -137,6 +137,20 @@ test('a pin is suggested from the source at the version that shipped, never a br
   assert.ok(!asked.some((u) => u.includes('/o/carries/') || u.includes('gitlab')))
 })
 
+test('a package already pinned is never suggested again, even when its pinned text fails', async () => {
+  const asked = []
+  const fetch = async (url) => {
+    asked.push(url)
+    return { ok: true }
+  }
+  // Without a text because its pinned file no longer matches: the pin's failure, not a new pin.
+  const packages = [{ name: 'p', version: '1.0.0', license: 'MIT', url: 'https://github.com/o/p', texts: [] }]
+  const { pins, unresolved } = await suggestPins(packages, { fetch, pinned: ['p@1.0.0'] })
+  assert.deepEqual(pins, {})
+  assert.deepEqual(unresolved, [])
+  assert.deepEqual(asked, [])
+})
+
 test('the npm closure leaves out dev dependencies and links, and fills in from installed manifests', () => {
   const dir = scratch()
   writeFileSync(
