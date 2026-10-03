@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-03
+
 ### Fixed
 
 - `notices`: a package that carries the notices of the code it bundles (`THIRD-PARTY-NOTICES`) but
