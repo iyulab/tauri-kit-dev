@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-03
+
 ### Added
 
 - `notice-pins --config <file>` (the notices config) looks up a pin for every shipped package still
