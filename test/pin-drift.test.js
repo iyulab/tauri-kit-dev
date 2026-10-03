@@ -23,7 +23,8 @@ function fixture(packages, pins) {
     join(dir, 'Directory.Packages.props'),
     `<Project><ItemGroup>${pins.map(([id, v]) => `<PackageVersion Include="${id}" Version="${v}" />`).join('')}</ItemGroup></Project>`,
   )
-  return { props: join(dir, 'Directory.Packages.props'), assets: join(dir, 'project.assets.json') }
+  const assets = join(dir, 'project.assets.json')
+  return { props: join(dir, 'Directory.Packages.props'), project: 'App.csproj', restore: () => assets }
 }
 
 const NEWEST = { 'Ours.Core': '1.9.0', 'Ours.Index': '2.0.0', 'Ours.Deep': '0.30.0', 'Ours.Pre': '1.0.0-beta.9', 'Theirs.Lib': '9.0.0' }
@@ -102,6 +103,14 @@ test('a pinned package’s stale floor on another of the publisher’s packages 
   })
   assert.equal(report.failures, 0)
   assert.equal(formatLine(report.lines.at(-1)), '  note    Ours.Core 1.9.0 still declares Ours.Deep >= 0.12.0, 18 minor versions behind 0.30.0 — is it still kept up with?')
+})
+
+test('the project is restored before its graph is read', async () => {
+  const paths = fixture([['Ours.Core', '1.8.0', 'Example Co']], [['Ours.Core', '1.8.0']])
+  const restored = []
+  const restore = (project) => (restored.push(project), paths.restore(project))
+  await checkPinDrift({ ...paths, restore, publisher: 'Example Co', latest, floors: noFloors })
+  assert.deepEqual(restored, ['App.csproj'])
 })
 
 test('no pins of the publisher is an error, not a pass', async () => {

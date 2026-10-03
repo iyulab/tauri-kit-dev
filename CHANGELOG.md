@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking**: `notices` and `pin-drift` take the .NET project, not its `project.assets.json`, and
+  restore it before reading — config `nuget: { project: '<file>.csproj' }` instead of
+  `nuget: { assets }`, `pin-drift --project <file>` instead of `--assets <file>`;
+  `nugetPackages({ project, restore? })` and `checkPinDrift({ project, restore?, … })` likewise. A
+  config that still names `nuget.assets` is an error that says so. Needs the .NET SDK on PATH (a
+  restore with nothing to do takes under a second and no network).
+
+### Fixed
+
+- `notices` and `pin-drift` read whatever the last restore left: after a branch switch or a pin
+  change, before anything restored again, the notices named the previous branch's package versions
+  (and `--check` then failed the right file as stale), with no message saying why. The assets file's
+  timestamp cannot tell — a restore with nothing to do leaves it untouched — so the project is now
+  restored first, the way `cargo metadata` resolves before it answers.
+
 ## [0.5.1] - 2026-10-03
 
 ### Fixed

@@ -13,6 +13,7 @@ import {
   needsReview,
   noticesTable,
   noticesText,
+  shippedNotices,
   npmPackages,
   nugetPackages,
   suggestPins,
@@ -213,12 +214,20 @@ test('NuGet packages count only when they put assets into the build', () => {
       },
     }),
   )
-  assert.deepEqual(nugetPackages({ assets: join(dir, 'project.assets.json') }), [
+  assert.deepEqual(nugetPackages({ project: 'Helper.csproj', restore: () => join(dir, 'project.assets.json') }), [
     { name: 'Lib.A', version: '1.0.0', license: 'MIT', url: 'https://github.com/x/a', texts: ['Copyright (c) A'], bundledNotices: ['notices of what it bundles'], vcs: { commit: 'def456' } },
     { name: 'Lib.B', version: '2.0.0', license: 'MIT', url: 'https://www.nuget.org/packages/Lib.B', texts: ['MIT License\n\nCopyright …'] },
     { name: 'Lib.C', version: '3.0.0', license: 'see https://example.com/license', url: 'https://www.nuget.org/packages/Lib.C', texts: [] },
   ])
-  assert.throws(() => nugetPackages({ assets: join(dir, 'missing.json') }), /dotnet restore/)
+  assert.throws(() => nugetPackages({ project: 'Helper.csproj', restore: () => join(dir, 'missing.json') }), /restoring Helper\.csproj left no/)
+})
+
+test('the nuget source reads the graph the restore of its project just wrote', () => {
+  const dir = scratch()
+  writeFileSync(join(dir, 'project.assets.json'), JSON.stringify({ packageFolders: { [dir + '/']: {} }, targets: { 'net10.0': {} } }))
+  const restored = []
+  shippedNotices({ nuget: { project: 'Helper.csproj', restore: (project) => (restored.push(project), join(dir, 'project.assets.json')) } })
+  assert.deepEqual(restored, ['Helper.csproj'])
 })
 
 test('a self-contained helper carries the runtime packs of the frameworks it references', () => {
@@ -254,7 +263,7 @@ test('a self-contained helper carries the runtime packs of the frameworks it ref
       },
     }),
   )
-  assert.deepEqual(nugetPackages({ assets: join(dir, 'project.assets.json') }), [
+  assert.deepEqual(nugetPackages({ project: 'Helper.csproj', restore: () => join(dir, 'project.assets.json') }), [
     { name: 'Microsoft.AspNetCore.App.Runtime.win-x64', version: '10.0.5', license: 'MIT', url: 'https://www.nuget.org/packages/Microsoft.AspNetCore.App.Runtime.win-x64', texts: ['web license'], bundledNotices: ['web notices'] },
     { name: 'Microsoft.NETCore.App.Runtime.NativeAOT.win-x64', version: '10.0.5', license: 'MIT', url: 'https://www.nuget.org/packages/Microsoft.NETCore.App.Runtime.NativeAOT.win-x64', texts: ['runtime license'], bundledNotices: ['runtime notices'] },
   ])
@@ -373,7 +382,7 @@ test('a package carrying only the notices of what it bundles still needs its own
       targets: { 'net10.0': { 'Lib.D/1.0.0': { type: 'package', runtime: { 'lib/net10.0/Lib.D.dll': {} } } } },
     }),
   )
-  const [shipped] = nugetPackages({ assets: join(dir, 'project.assets.json') })
+  const [shipped] = nugetPackages({ project: 'Helper.csproj', restore: () => join(dir, 'project.assets.json') })
   assert.deepEqual(shipped.texts, [])
   assert.deepEqual(shipped.bundledNotices, ['notices of what D bundles'])
   assert.deepEqual(withoutText([shipped]).map((p) => p.name), ['Lib.D'])

@@ -7,11 +7,11 @@
 //       in with a flag run only when it is given. Exits 1 when a step failed, 2 when it did not
 //       start.
 //
-//   pin-drift --props <file> --assets <file> --publisher <name> [--max-minor-gap <n>] [--waivers <file>]
+//   pin-drift --props <file> --project <file> --publisher <name> [--max-minor-gap <n>] [--waivers <file>]
 //       Checks the NuGet pins of one publisher's packages in a Directory.Packages.props against
 //       nuget.org: a major difference, or more minor versions behind than allowed (default 5),
-//       fails unless a waiver with an unexpired date covers it. --assets is the restored
-//       project.assets.json; --waivers a JSON list of { package, until, reason }. Exits 1 on drift.
+//       fails unless a waiver with an unexpired date covers it. --project is the .NET project whose
+//       restored graph says which packages are used (restored first); --waivers a JSON list of { package, until, reason }. Exits 1 on drift.
 //
 //   notices --config <file> [--strict] [--check]
 //       Writes an app's third-party notices: every package its package managers say it ships, with
@@ -56,7 +56,7 @@ import { checkRepo, loadConfig } from '../src/public-text.js'
 import { runInSandbox } from '../src/sandbox.js'
 
 const USAGE = `usage: tauri-kit-dev gate --config <file> [--list] [--only a,b] [--skip c] [--<flag>]
-       tauri-kit-dev pin-drift --props <file> --assets <file> --publisher <name> [--max-minor-gap <n>] [--waivers <file>]
+       tauri-kit-dev pin-drift --props <file> --project <file> --publisher <name> [--max-minor-gap <n>] [--waivers <file>]
        tauri-kit-dev notices --config <file> [--strict] [--check]
        tauri-kit-dev notice-pins (--config <file> | --pins <file> --dir <dir>)
        tauri-kit-dev public-text [--config <file>] [--history] [<repo>...]
@@ -72,16 +72,16 @@ ${USAGE}`)
 }
 
 async function pinDrift(argv) {
-  const args = parseArgs(argv, { options: ['--props', '--assets', '--publisher', '--max-minor-gap', '--waivers'] })
-  const { '--props': props, '--assets': assets, '--publisher': publisher } = args.options
-  if (!props || !assets || !publisher) throw new Error(`--props, --assets and --publisher are required
+  const args = parseArgs(argv, { options: ['--props', '--project', '--publisher', '--max-minor-gap', '--waivers'] })
+  const { '--props': props, '--project': project, '--publisher': publisher } = args.options
+  if (!props || !project || !publisher) throw new Error(`--props, --project and --publisher are required
 ${USAGE}`)
   const gapText = args.options['--max-minor-gap']
   const maxMinorGap = gapText === undefined ? 5 : Number.parseInt(gapText, 10)
   if (!Number.isInteger(maxMinorGap) || maxMinorGap < 0) throw new Error(`--max-minor-gap must be a whole number — got "${gapText}"`)
   const waiversFile = args.options['--waivers']
   const waivers = waiversFile ? JSON.parse(readFileSync(waiversFile, 'utf8')) : []
-  const report = await checkPinDrift({ props, assets, publisher, maxMinorGap, waivers })
+  const report = await checkPinDrift({ props, project, publisher, maxMinorGap, waivers })
   for (const line of report.lines) console.log(formatLine(line))
   if (report.failures) {
     console.error(`
@@ -94,6 +94,12 @@ Pin drift within threshold: ${report.pinned} pinned, ${report.transitive} transi
   return 0
 }
 
+/** The project a notices config's `nuget` names — `assets` is no longer read: it can be stale. */
+function nugetProject(file, nuget) {
+  if (nuget.project) return nuget.project
+  throw new Error(`${file}: nuget needs { project } — the .NET project file, which notices restores itself (nuget.assets is no longer read)`)
+}
+
 /** A notices config with its paths resolved against its own folder. */
 async function noticeSources(file) {
   const config = await loadConfig(file)
@@ -104,7 +110,7 @@ async function noticeSources(file) {
     sources: {
       npm: config.npm && { ...config.npm, lock: at(config.npm.lock), installedAt: config.npm.installedAt && at(config.npm.installedAt) },
       cargo: config.cargo && { ...config.cargo, cwd: at(config.cargo.cwd) },
-      nuget: config.nuget && { assets: at(config.nuget.assets) },
+      nuget: config.nuget && { project: at(nugetProject(file, config.nuget)) },
       pinned: config.pinned && {
         pins: typeof config.pinned.pins === 'string' ? at(config.pinned.pins) : config.pinned.pins,
         dir: at(config.pinned.dir),

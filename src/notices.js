@@ -12,8 +12,9 @@
 //     target. Build- and dev-dependencies run during the build and are not distributed.
 //   - npm (`npmPackages`): every package in a lockfile that is not a dev dependency or a link —
 //     the production closure, whose code is bundled into the web assets or a bundled helper.
-//   - NuGet (`nugetPackages`): the packages of a restored .NET project (`project.assets.json`)
-//     that put runtime or native assets into the build — for a bundled .NET helper. Meta-packages
+//   - NuGet (`nugetPackages`): the packages of a .NET project, as its restore resolves them now
+//     (`project.assets.json` — the project is restored first, see dotnet.js), that put runtime or
+//     native assets into the build — for a bundled .NET helper. Meta-packages
 //     and analyzers carry none. A helper published self-contained or ahead of time also carries the
 //     runtime of each framework it references: the runtime packs the restore downloaded for it.
 //
@@ -35,6 +36,7 @@ import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { restoreAssets } from './dotnet.js'
 
 /**
  * @typedef {{ commit?: string, path?: string }} Vcs
@@ -276,12 +278,13 @@ const hasFiles = (assets) => !!assets && Object.keys(assets).some((f) => !f.ends
  * reference, and a build tool such as the ahead-of-time compiler, are left out. Licenses come from
  * each package's own nuspec in the restore's package folder.
  *
- * @param {{ assets: string }} options the project's `obj/project.assets.json` — present only after
- *   `dotnet restore`
+ * @param {{ project: string, restore?: (project: string) => string }} options `restore` restores
+ *   the project and returns its `project.assets.json`; without it, dotnet is run (`restoreAssets`).
  * @returns {Package[]}
  */
-export function nugetPackages({ assets }) {
-  if (!existsSync(assets)) throw new Error(`${assets} is missing — run \`dotnet restore\` first`)
+export function nugetPackages({ project, restore = restoreAssets }) {
+  const assets = restore(project)
+  if (!existsSync(assets)) throw new Error(`restoring ${project} left no ${assets}`)
   const parsed = JSON.parse(readFileSync(assets, 'utf8'))
   const folder = Object.keys(parsed.packageFolders ?? {})[0]
   const packages = []
@@ -588,7 +591,7 @@ export function writeOrCheck(file, body, { check = false } = {}) {
  * @typedef {{
  *   npm?: { lock: string, installedAt?: string },
  *   cargo?: { cwd: string, target?: string },
- *   nuget?: { assets: string },
+ *   nuget?: { project: string, restore?: (project: string) => string },
  *   pinned?: { pins: string | Record<string, Pin>, dir: string },
  * }} NoticeSources
  */

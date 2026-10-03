@@ -142,7 +142,7 @@ export default {
   title: 'My App — third-party notices',
   npm: { lock: 'package-lock.json', installedAt: '.' },
   cargo: { cwd: 'src-tauri', target: 'x86_64-pc-windows-msvc' }, // the targets the app is built for
-  nuget: { assets: 'helper/obj/project.assets.json' },             // after a restore
+  nuget: { project: 'helper/Helper.csproj' },                      // restored first, needs dotnet
   pinned: { pins: 'notices/pins.json', dir: 'notices/texts' },
   // render: (packages) => '…',  // a document of your own instead of the default one
 }

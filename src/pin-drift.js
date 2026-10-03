@@ -10,9 +10,9 @@
 // another name; one no longer needed is reported, so it is removed rather than left to hide the
 // next drift. Smaller gaps are reported and pass — drift alone is not a defect, drift nobody sees is.
 //
-// Which packages count is read from the restored graph (`project.assets.json`, so `dotnet restore`
-// has to have run): those whose own nuspec lists `publisher` among its authors — not a list of
-// name prefixes, which silently leaves out the next package nobody added to it. Also:
+// Which packages count is read from the restored graph (`project.assets.json` — the project is
+// restored first, see dotnet.js): those whose own nuspec lists `publisher` among its authors — not
+// a list of name prefixes, which silently leaves out the next package nobody added to it. Also:
 //   - such packages that arrive only transitively are held to the same threshold: nothing pins
 //     them, so nothing else would notice them falling behind;
 //   - a pinned package whose own declared floor on another such package lags far behind is noted
@@ -20,6 +20,7 @@
 
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { restoreAssets } from './dotnet.js'
 
 /**
  * @typedef {{ package: string, until: string, reason: string }} Waiver
@@ -111,16 +112,19 @@ export async function nugetFloors(id, version, fetchImpl = fetch) {
  * Checks the pins of `publisher`'s packages in `props` against the newest versions.
  *
  * @param {{
- *   props: string, assets: string, publisher: string, maxMinorGap?: number,
+ *   props: string, project: string, publisher: string, maxMinorGap?: number,
+ *   restore?: (project: string) => string,
  *   waivers?: Waiver[], today?: string,
  *   latest?: (id: string, allowPrerelease: boolean) => Promise<string>,
  *   floors?: (id: string, version: string) => Promise<Map<string, string>>,
- * }} options `latest` and `floors` default to asking nuget.org.
+ * }} options `restore` restores the project and returns its `project.assets.json` (default: dotnet,
+ *   `restoreAssets`); `latest` and `floors` default to asking nuget.org.
  * @returns {Promise<DriftReport>}
  */
 export async function checkPinDrift({
   props,
-  assets: assetsPath,
+  project,
+  restore = restoreAssets,
   publisher,
   maxMinorGap = 5,
   waivers: waiverList = [],
@@ -128,7 +132,8 @@ export async function checkPinDrift({
   latest = (id, pre) => nugetLatest(id, pre),
   floors = (id, version) => nugetFloors(id, version),
 }) {
-  if (!existsSync(assetsPath)) throw new Error(`${assetsPath} not found — run \`dotnet restore\` first`)
+  const assetsPath = restore(project)
+  if (!existsSync(assetsPath)) throw new Error(`restoring ${project} left no ${assetsPath}`)
   const assets = JSON.parse(readFileSync(assetsPath, 'utf8'))
   const waivers = readWaivers(waiverList, today)
   const resolved = resolvedPackages(assets)
