@@ -65,6 +65,24 @@ Scenarios run in order against one window, each building on what the last left. 
 that many times, each from a fresh start — for a scenario that fails only sometimes.
 `E2E_SCREENSHOTS=<dir>` saves a picture after each scenario, and of the window when one fails.
 
+The window under test reads its bundled resources from the copies a build leaves next to the
+executable (`target/<profile>/…`), and the build copies files in but never removes one: a file
+deleted from the source, or left there by a build of another branch, is still read by the
+scenarios. Removing the copy before the build makes it the source's again — in `src-tauri/build.rs`,
+for a resource directory bundled as `assets`:
+
+```rust
+fn main() {
+    // Watch the source directory so that a file removed from it runs this again.
+    println!("cargo:rerun-if-changed=../assets");
+    // OUT_DIR is target/<profile>/build/<crate>-<hash>/out; three levels up is the profile directory.
+    if let Some(profile) = std::env::var_os("OUT_DIR").as_deref().map(std::path::Path::new).and_then(|out| out.ancestors().nth(3)) {
+        let _ = std::fs::remove_dir_all(profile.join("assets"));
+    }
+    tauri_build::build()
+}
+```
+
 ## Checking the installer
 
 ```js

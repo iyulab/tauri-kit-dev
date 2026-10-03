@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Documentation
+
+- README: a development build keeps reading a bundled resource file after it is removed from the
+  source (the build copies resources next to the executable and never removes a copy), so window
+  scenarios can run against files the source no longer has; a `build.rs` that removes the copy
+  first keeps them in step.
+
 ## [0.3.1] - 2026-10-02
 
 ### Fixed
