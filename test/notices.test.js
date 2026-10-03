@@ -214,7 +214,7 @@ test('NuGet packages count only when they put assets into the build', () => {
     }),
   )
   assert.deepEqual(nugetPackages({ assets: join(dir, 'project.assets.json') }), [
-    { name: 'Lib.A', version: '1.0.0', license: 'MIT', url: 'https://github.com/x/a', texts: ['Copyright (c) A', 'notices of what it bundles'], vcs: { commit: 'def456' } },
+    { name: 'Lib.A', version: '1.0.0', license: 'MIT', url: 'https://github.com/x/a', texts: ['Copyright (c) A'], bundledNotices: ['notices of what it bundles'], vcs: { commit: 'def456' } },
     { name: 'Lib.B', version: '2.0.0', license: 'MIT', url: 'https://www.nuget.org/packages/Lib.B', texts: ['MIT License\n\nCopyright …'] },
     { name: 'Lib.C', version: '3.0.0', license: 'see https://example.com/license', url: 'https://www.nuget.org/packages/Lib.C', texts: [] },
   ])
@@ -255,8 +255,8 @@ test('a self-contained helper carries the runtime packs of the frameworks it ref
     }),
   )
   assert.deepEqual(nugetPackages({ assets: join(dir, 'project.assets.json') }), [
-    { name: 'Microsoft.AspNetCore.App.Runtime.win-x64', version: '10.0.5', license: 'MIT', url: 'https://www.nuget.org/packages/Microsoft.AspNetCore.App.Runtime.win-x64', texts: ['web license', 'web notices'] },
-    { name: 'Microsoft.NETCore.App.Runtime.NativeAOT.win-x64', version: '10.0.5', license: 'MIT', url: 'https://www.nuget.org/packages/Microsoft.NETCore.App.Runtime.NativeAOT.win-x64', texts: ['runtime license', 'runtime notices'] },
+    { name: 'Microsoft.AspNetCore.App.Runtime.win-x64', version: '10.0.5', license: 'MIT', url: 'https://www.nuget.org/packages/Microsoft.AspNetCore.App.Runtime.win-x64', texts: ['web license'], bundledNotices: ['web notices'] },
+    { name: 'Microsoft.NETCore.App.Runtime.NativeAOT.win-x64', version: '10.0.5', license: 'MIT', url: 'https://www.nuget.org/packages/Microsoft.NETCore.App.Runtime.NativeAOT.win-x64', texts: ['runtime license'], bundledNotices: ['runtime notices'] },
   ])
 })
 
@@ -358,6 +358,34 @@ test('a pin can list several files, all of which the package then carries', asyn
   assert.equal(packages[0].textSource, 'https://src/x/LICENSE, https://src/x/NOTICE')
   writeFileSync(join(dir, 'x@1.0.0.2.txt'), 'changed')
   assert.deepEqual(withoutText(applyPinned([pkg], { pins, dir }).packages).map((p) => p.name), ['x'], 'one bad file leaves the package without text')
+})
+
+test('a package carrying only the notices of what it bundles still needs its own license text', async () => {
+  const dir = scratch()
+  const folder = join(dir, 'packages', 'lib.d', '1.0.0')
+  mkdirSync(folder, { recursive: true })
+  writeFileSync(join(folder, 'lib.d.nuspec'), '<package><metadata><license type="expression">MIT</license></metadata></package>')
+  writeFileSync(join(folder, 'THIRD-PARTY-NOTICES.TXT'), 'notices of what D bundles')
+  writeFileSync(
+    join(dir, 'project.assets.json'),
+    JSON.stringify({
+      packageFolders: { [join(dir, 'packages') + '/']: {} },
+      targets: { 'net10.0': { 'Lib.D/1.0.0': { type: 'package', runtime: { 'lib/net10.0/Lib.D.dll': {} } } } },
+    }),
+  )
+  const [shipped] = nugetPackages({ assets: join(dir, 'project.assets.json') })
+  assert.deepEqual(shipped.texts, [])
+  assert.deepEqual(shipped.bundledNotices, ['notices of what D bundles'])
+  assert.deepEqual(withoutText([shipped]).map((p) => p.name), ['Lib.D'])
+
+  const texts = join(dir, 'texts')
+  const pins = { 'Lib.D@1.0.0': { source: 'https://src/d/LICENSE' } }
+  await fetchPinned({ pins, dir: texts, fetch: async () => new Response('MIT License\n\nCopyright (c) D') })
+  const { packages, unused } = applyPinned([shipped], { pins, dir: texts })
+  assert.deepEqual(unused, [])
+  assert.deepEqual(packages[0].texts, ['MIT License\n\nCopyright (c) D'])
+  assert.deepEqual(packages[0].bundledNotices, ['notices of what D bundles'])
+  assert.match(noticesText(packages), /Copyright \(c\) D\n\nnotices of what D bundles\n/, 'the license comes before the bundled notices')
 })
 
 test('writeOrCheck writes, then reports whether the file still matches', () => {

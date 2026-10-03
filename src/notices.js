@@ -19,12 +19,14 @@
 //
 // Every reader returns `{ name, version, license, url, texts }`, sorted by name and version.
 // `texts` holds the license texts the package itself carries (LICENSE, LICENSE-MIT, COPYING, NOTICE,
-// or the file a nuspec names), then the notices of the third-party code it bundles
-// (THIRD-PARTY-NOTICES, ThirdPartyNotices) — that code ships inside the package's files, so its
-// notices ship with them. Most permissive licenses make keeping that text — with its copyright
-// line — the condition itself, so an identifier alone does not satisfy them: `withoutText` lists the
-// packages that carry none, `applyPinned` fills those in from texts pinned at the same version of
-// their source, and `noticesText` renders a document that includes every text. A package whose
+// or the file a nuspec names). A package that bundles third-party code also gets `bundledNotices`,
+// that code's notices (THIRD-PARTY-NOTICES, ThirdPartyNotices) — the code ships inside the package's
+// files, so its notices ship with them. They are kept apart because they are not the package's own
+// license: a package carrying only those still lacks its license text. Most permissive licenses make
+// keeping that text — with its copyright line — the condition itself, so an identifier alone does not
+// satisfy them: `withoutText` lists the packages that carry none, `applyPinned` fills those in from
+// texts pinned at the same version of their source, and `noticesText` renders a document that
+// includes every text, each package's license before the notices of what it bundles. A package whose
 // published form says where in its source it came from also gets `vcs` — the commit (a crate's
 // `.cargo_vcs_info.json`, a nuspec's `repository commit`, an npm manifest's `gitHead`) and the
 // folder within the repository — which `suggestPins` uses to find the text at that same version.
@@ -36,12 +38,18 @@ import { dirname, join } from 'node:path'
 
 /**
  * @typedef {{ commit?: string, path?: string }} Vcs
- * @typedef {{ name: string, version: string, license: string, url: string, texts: string[], textSource?: string, vcs?: Vcs }} Package
+ * @typedef {{ name: string, version: string, license: string, url: string, texts: string[], bundledNotices?: string[], textSource?: string, vcs?: Vcs }} Package
  */
 
 /** `vcs` when the published package names a commit or a folder, nothing otherwise. */
 const withVcs = (pkg, commit, path) =>
   commit || path ? { ...pkg, vcs: { ...(commit ? { commit } : {}), ...(path ? { path } : {}) } } : pkg
+
+/** `bundledNotices` when the package folder carries any, nothing otherwise. */
+const withBundled = (pkg, dir) => {
+  const notices = bundledNotices(dir)
+  return notices.length ? { ...pkg, bundledNotices: notices } : pkg
+}
 
 const LICENSE_FILE = /^(?:licen[cs]e|copying|notice)(?:[-._].*)?$/i
 const THIRD_PARTY_FILE = /^third[-_ ]?party[-_ ]?notices?(?:[-._].*)?$/i
@@ -58,15 +66,26 @@ const textsMatching = (dir, pattern) =>
         .filter(Boolean)
 
 /**
- * The license texts a package folder carries — LICENSE, LICENSE-MIT, LICENSE.txt, COPYING, NOTICE and
- * the like — then the notices of the third-party code it bundles (THIRD-PARTY-NOTICES,
- * ThirdPartyNotices), each in file name order, trimmed. A missing folder carries none.
+ * The license texts a package folder carries for itself — LICENSE, LICENSE-MIT, LICENSE.txt, COPYING,
+ * NOTICE and the like — in file name order, trimmed. A missing folder carries none.
  *
  * @param {string} dir
  * @returns {string[]}
  */
 export function licenseTexts(dir) {
-  return [...textsMatching(dir, LICENSE_FILE), ...textsMatching(dir, THIRD_PARTY_FILE)]
+  return textsMatching(dir, LICENSE_FILE)
+}
+
+/**
+ * The notices of the third-party code a package folder bundles — THIRD-PARTY-NOTICES,
+ * ThirdPartyNotices and the like — in file name order, trimmed. They are not the package's own
+ * license, so they never stand in for it.
+ *
+ * @param {string} dir
+ * @returns {string[]}
+ */
+export function bundledNotices(dir) {
+  return textsMatching(dir, THIRD_PARTY_FILE)
 }
 
 const readText = (path) => readFileSync(path, 'utf8').replace(/\r\n/g, '\n').trim()
@@ -167,13 +186,16 @@ export function cargoPackages({ cwd, target, metadata }) {
       // `cargo publish` records the commit it packaged and the crate's folder in the repository.
       const info = dir && existsSync(join(dir, '.cargo_vcs_info.json')) ? JSON.parse(readFileSync(join(dir, '.cargo_vcs_info.json'), 'utf8')) : {}
       return withVcs(
-        {
-          name: p.name,
-          version: p.version,
-          license: p.license ?? '(not declared)',
-          url: p.repository ?? `https://crates.io/crates/${p.name}`,
-          texts,
-        },
+        withBundled(
+          {
+            name: p.name,
+            version: p.version,
+            license: p.license ?? '(not declared)',
+            url: p.repository ?? `https://crates.io/crates/${p.name}`,
+            texts,
+          },
+          dir,
+        ),
         info.git?.sha1,
         info.path_in_vcs,
       )
@@ -211,13 +233,16 @@ export function npmPackages({ lock, installedAt = null }) {
     const repo = typeof manifest.repository === 'string' ? manifest.repository : manifest.repository?.url
     packages.push(
       withVcs(
-        {
-          name,
-          version: entry.version ?? manifest.version ?? '(unknown)',
-          license: typeof declared === 'string' ? declared : '(not declared)',
-          url: (repo ?? `https://www.npmjs.com/package/${name}`).replace(/^git\+/, '').replace(/\.git$/, ''),
-          texts: installedAt ? licenseTexts(join(installedAt, path)) : [],
-        },
+        withBundled(
+          {
+            name,
+            version: entry.version ?? manifest.version ?? '(unknown)',
+            license: typeof declared === 'string' ? declared : '(not declared)',
+            url: (repo ?? `https://www.npmjs.com/package/${name}`).replace(/^git\+/, '').replace(/\.git$/, ''),
+            texts: installedAt ? licenseTexts(join(installedAt, path)) : [],
+          },
+          installedAt ? join(installedAt, path) : null,
+        ),
         manifest.gitHead,
         typeof manifest.repository === 'object' ? manifest.repository?.directory : undefined,
       ),
@@ -292,7 +317,7 @@ function nugetPackage(folder, name, version) {
   const repo =
     nuspec.match(/<repository\b[^>]*\burl="([^"]+)"/)?.[1] ?? nuspec.match(/<projectUrl>([^<]+)<\/projectUrl>/)?.[1]
   const commit = nuspec.match(/<repository\b[^>]*\bcommit="([^"]+)"/)?.[1]
-  return withVcs({
+  const pkg = {
     name,
     version,
     license:
@@ -303,11 +328,9 @@ function nugetPackage(folder, name, version) {
           ? `see ${licenseUrl}`
           : '(not declared)'),
     url: (repo ?? `https://www.nuget.org/packages/${name}`).replace(/\.git$/, ''),
-    texts:
-      licenseFile && existsSync(join(dir, licenseFile))
-        ? [readText(join(dir, licenseFile)), ...textsMatching(dir, THIRD_PARTY_FILE)]
-        : licenseTexts(dir),
-  }, commit)
+    texts: licenseFile && existsSync(join(dir, licenseFile)) ? [readText(join(dir, licenseFile))] : licenseTexts(dir),
+  }
+  return withVcs(withBundled(pkg, dir), commit)
 }
 
 /** A Markdown table of packages. @param {Package[]} packages */
@@ -318,23 +341,25 @@ export function noticesTable(packages) {
 
 /**
  * A plain-text notices document: a heading, then each package with its license, upstream and the
- * license texts it carries. A text that several packages carry word for word is printed once, at
- * its first package, and referred to from the others — each text is still kept whole, copyright
- * lines included, which grouping packages under one license name would lose.
+ * license texts it carries, then the notices of what it bundles. A text that several packages carry
+ * word for word is printed once, at its first package, and referred to from the others — each text
+ * is still kept whole, copyright lines included, which grouping packages under one license name
+ * would lose.
  *
  * @param {Package[]} packages
  * @param {{ title?: string }} [options]
  */
 export function noticesText(packages, { title = 'Third-party notices' } = {}) {
   const rule = '-'.repeat(78)
+  const textsOf = (p) => [...(p.texts ?? []), ...(p.bundledNotices ?? [])]
   const count = new Map()
-  for (const p of packages) for (const t of p.texts ?? []) count.set(t, (count.get(t) ?? 0) + 1)
+  for (const p of packages) for (const t of textsOf(p)) count.set(t, (count.get(t) ?? 0) + 1)
   const firstAt = new Map()
   const out = [title, '='.repeat(title.length), '', `This program includes the following ${packages.length} third-party packages.`, '']
   for (const p of packages) {
     out.push(rule, `${p.name} ${p.version}`, `License: ${p.license}`, `Upstream: ${p.url}`)
     if (p.textSource) out.push(`License text from: ${p.textSource}`)
-    for (const t of p.texts ?? []) {
+    for (const t of textsOf(p)) {
       if (firstAt.has(t)) {
         out.push('', `Same license text as ${firstAt.get(t)}.`)
         continue
@@ -380,7 +405,8 @@ const digest = (bytes) => createHash('sha256').update(bytes.toString('utf8').rep
 const pinTable = (pins) => (typeof pins === 'string' ? (existsSync(pins) ? JSON.parse(readFileSync(pins, 'utf8')) : {}) : pins)
 
 /**
- * Fills in the texts of packages that carry none from pinned, committed files.
+ * Fills in the texts of packages that carry none from pinned, committed files. The notices of what a
+ * package bundles are not its license text, so a package carrying only those is still filled in.
  *
  * Returns the packages (a filled one also gets `textSource`, the pinned URLs), the pins that
  * applied to nothing (`unused` — a package moved to another version, left the graph, or now

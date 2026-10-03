@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `notices`: a package that carries the notices of the code it bundles (`THIRD-PARTY-NOTICES`) but
+  not its own license file counted as having its license text, so its license was left out and the
+  pin that supplied it failed as applying to no shipped package. The bundled notices are now kept
+  apart, as `bundledNotices`, and never stand in for the package's license: the package is listed by
+  `withoutText` until a pin fills it in, and the document prints its license before the notices.
+  `licenseTexts(dir)` returns the package's own license files only; `bundledNotices(dir)` returns the
+  bundled notices.
+
 ## [0.5.0] - 2026-10-03
 
 ### Added
