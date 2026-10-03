@@ -314,6 +314,13 @@ test('writeOrCheck writes, then reports whether the file still matches', () => {
   assert.equal(readFileSync(file, 'utf8'), 'one')
 })
 
+test('a checkout with CRLF line endings is not stale for that alone', () => {
+  const file = join(scratch(), 'NOTICES.txt')
+  writeFileSync(file, 'one\r\ntwo\r\n')
+  assert.equal(writeOrCheck(file, 'one\ntwo\n', { check: true }), true)
+  assert.equal(writeOrCheck(file, 'one\nthree\n', { check: true }), false)
+})
+
 test('the notices command writes an app’s notices from its config, and fails on what is wrong with them', async () => {
   const { spawnSync } = await import('node:child_process')
   const { createHash } = await import('node:crypto')

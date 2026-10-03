@@ -13,6 +13,8 @@
 - `notices`: a package's notices for the third-party code it bundles (`THIRD-PARTY-NOTICES`,
   `ThirdPartyNotices`) are among its texts, after its license — that code ships inside the
   package's files. The .NET runtime packs carry theirs this way.
+- `notices --check` (`writeOrCheck`) reads CRLF as LF, as the pinned-text digests already do — a
+  checkout that converts line endings (git's autocrlf on Windows) no longer reads as stale.
 
 ## [0.4.0] - 2026-10-03
 

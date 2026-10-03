@@ -443,14 +443,16 @@ export async function fetchPinned({ pins, dir, fetch = globalThis.fetch }) {
 
 /**
  * Writes `body` to `file`, or with `check` compares instead and writes nothing. Returns whether the
- * file now matches — with `check`, `false` means the committed file is stale.
+ * file now matches — with `check`, `false` means the committed file is stale. CRLF reads as LF, so
+ * a checkout that converts line endings (git's autocrlf on Windows) is not stale for that alone.
  *
  * @param {string} file
  * @param {string} body
  * @param {{ check?: boolean }} [options]
  */
 export function writeOrCheck(file, body, { check = false } = {}) {
-  if (check) return existsSync(file) && readFileSync(file, 'utf8') === body
+  const lf = (text) => text.replace(/\r\n/g, '\n')
+  if (check) return existsSync(file) && lf(readFileSync(file, 'utf8')) === lf(body)
   writeFileSync(file, body, 'utf8')
   return true
 }
