@@ -5,6 +5,7 @@
 
 import { spawn } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Cdp, findPage, portAnswers } from './cdp.js'
 
@@ -197,8 +198,9 @@ export async function webviewGone(profile, { graceMs = 10_000, platform = proces
 }
 
 /**
- * Reads `--through <part of a name>` and `--repeat <n>`: the scenarios up to the first whose name
- * contains that text, run n times over.
+ * Reads `--through <part of a name>`, `--only <part of a name>` and `--repeat <n>`: the scenarios up to
+ * the first whose name contains that text — or only those whose names contain it, for scenarios that
+ * stand on their own, such as measurements — run n times over.
  *
  * @param {string[]} names  the scenarios, in order
  * @param {string[]} argv
@@ -208,12 +210,19 @@ export function selectScenarios(names, argv) {
     const i = argv.indexOf(flag)
     return i >= 0 ? argv[i + 1] : undefined
   }
-  const known = new Set(['--through', '--repeat'])
+  const known = new Set(['--through', '--only', '--repeat'])
   const unknown = argv.filter((a, i) => a.startsWith('--') && !known.has(a) && !known.has(argv[i - 1]))
-  if (unknown.length) throw new Error(`unknown option: ${unknown.join(' ')} (expected --through <text>, --repeat <n>)`)
+  if (unknown.length) throw new Error(`unknown option: ${unknown.join(' ')} (expected --through <text>, --only <text>, --repeat <n>)`)
   const through = value('--through')
+  const only = value('--only')
+  if (through !== undefined && only !== undefined) throw new Error('--through and --only choose differently; give one of them')
   const repeat = Number(value('--repeat') ?? 1)
   if (!Number.isInteger(repeat) || repeat < 1) throw new Error('--repeat takes a whole number of runs, 1 or more')
+  if (only !== undefined) {
+    const selected = names.filter((n) => n.includes(only))
+    if (!selected.length) throw new Error(`no scenario name contains "${only}"`)
+    return { selected, repeat }
+  }
   const last = through === undefined ? names.length - 1 : names.findIndex((n) => n.includes(through))
   if (last < 0) throw new Error(`no scenario name contains "${through}"`)
   return { selected: names.slice(0, last + 1), repeat }
@@ -232,17 +241,30 @@ export function pictureName(name) {
  * @param {object} options
  * @param {() => Promise<{ app: App, context?: any, stop?: () => Promise<void> }>} options.start
  *        a fresh start for one run: the app, whatever the scenarios share, and how to clean up
- * @param {string[]} [options.argv]          `--through`, `--repeat` (default: this process's arguments)
+ * @param {string[]} [options.argv]          `--through`, `--only`, `--repeat` (default: this process's arguments)
  * @param {string} [options.screenshots]     a folder for a picture after each scenario (default: E2E_SCREENSHOTS)
+ * @param {string} [options.failures]        where the picture of a failure goes without `screenshots`, so a
+ *        scenario that fails only sometimes can be read afterwards (default: a new folder in the temp folder)
  * @param {(app: App) => Promise<string>} [options.shown]  what the window showed when a scenario failed
  * @param {(line: string) => void} [options.log]
  */
-export async function runScenarios(scenarios, { start, argv = process.argv.slice(2), screenshots = process.env.E2E_SCREENSHOTS, shown, log = console.log }) {
+export async function runScenarios(scenarios, {
+  start,
+  argv = process.argv.slice(2),
+  screenshots = process.env.E2E_SCREENSHOTS,
+  failures = join(tmpdir(), 'tauri-kit-dev-failures', new Date().toISOString().replace(/[:.]/g, '-')),
+  shown,
+  log = console.log,
+}) {
   const { selected, repeat } = selectScenarios(Object.keys(scenarios), argv)
-  const picture = async (app, name) => {
-    if (!screenshots || !app.child) return
-    await mkdir(screenshots, { recursive: true })
-    await writeFile(join(screenshots, pictureName(name)), await app.cdp.screenshot())
+  /** Saves a picture of the window in `dir`; answers where, or nothing when there is no window. */
+  const picture = async (app, name, dir = screenshots) => {
+    if (!dir || !app.child) return undefined
+    const png = await app.cdp.screenshot()
+    await mkdir(dir, { recursive: true })
+    const file = join(dir, pictureName(name))
+    await writeFile(file, png)
+    return file
   }
 
   const runOnce = async () => {
@@ -257,7 +279,8 @@ export async function runScenarios(scenarios, { start, argv = process.argv.slice
         } catch (e) {
           const said = shown && run.app.child ? await shown(run.app).catch(() => '') : ''
           log(`  ✗ ${name}\n    ${String(e.message).replaceAll('\n', '\n    ')}${said ? `\n    the window showed: ${said}` : ''}`)
-          await picture(run.app, `FAILED ${name}`).catch(() => {})
+          const kept = await picture(run.app, `FAILED ${name}`, screenshots ?? failures).catch(() => undefined)
+          if (kept) log(`    picture: ${kept}`)
           return name
         }
       }
@@ -268,13 +291,13 @@ export async function runScenarios(scenarios, { start, argv = process.argv.slice
     }
   }
 
-  const failures = []
+  const failedRuns = []
   for (let n = 1; n <= repeat; n++) {
     if (repeat > 1) log(`\nrun ${n} of ${repeat}`)
     const failed = await runOnce()
-    if (failed) failures.push(failed)
+    if (failed) failedRuns.push(failed)
   }
-  if (repeat === 1) log(failures.length ? `\n${failures.length} scenario failed` : `\nall ${selected.length} scenarios passed`)
-  else log(`\n${repeat - failures.length} of ${repeat} runs passed${failures.length ? ` — failed: ${[...new Set(failures)].join(', ')}` : ''}`)
-  return failures.length ? 1 : 0
+  if (repeat === 1) log(failedRuns.length ? `\n${failedRuns.length} scenario failed` : `\nall ${selected.length} scenarios passed`)
+  else log(`\n${repeat - failedRuns.length} of ${repeat} runs passed${failedRuns.length ? ` — failed: ${[...new Set(failedRuns)].join(', ')}` : ''}`)
+  return failedRuns.length ? 1 : 0
 }

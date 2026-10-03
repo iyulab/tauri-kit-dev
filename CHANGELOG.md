@@ -11,6 +11,15 @@
   without a license text; `--check` compares instead of writing. The config's `render(packages)`
   replaces the default document. An app no longer assembles the readers, the pins and these rules
   in a script of its own. The assembly is exported as `shippedNotices(sources)`.
+- `app`: `runScenarios` takes `--only <part of a name>` — just the scenarios whose names contain
+  it, in order, without those before them — for scenarios that stand on their own, such as
+  measurements. `--through` and `--only` together are an error.
+
+### Changed
+
+- `app`: `runScenarios` keeps the picture of a failed scenario even without `E2E_SCREENSHOTS`, in a
+  new folder under the temp folder (the `failures` option names another), and logs where — an
+  intermittent failure can be read after the run.
 
 ### Documentation
 

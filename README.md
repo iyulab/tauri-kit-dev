@@ -61,9 +61,12 @@ process.exitCode = await runScenarios(
 ```
 
 Scenarios run in order against one window, each building on what the last left. `--through
-<part of a name>` stops after the first scenario whose name contains it and `--repeat <n>` runs
-that many times, each from a fresh start — for a scenario that fails only sometimes.
-`E2E_SCREENSHOTS=<dir>` saves a picture after each scenario, and of the window when one fails.
+<part of a name>` stops after the first scenario whose name contains it; `--only <part of a name>`
+runs just the scenarios whose names contain it, for ones that stand on their own such as
+measurements; `--repeat <n>` runs that many times, each from a fresh start — for a scenario that
+fails only sometimes. `E2E_SCREENSHOTS=<dir>` saves a picture after each scenario. A failure's
+picture is kept either way — in that folder, or else in a new one under the temp folder (the
+`failures` option) — and the run says where.
 
 The window under test reads its bundled resources from the copies a build leaves next to the
 executable (`target/<profile>/…`), and the build copies files in but never removes one: a file

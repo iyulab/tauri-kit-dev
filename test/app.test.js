@@ -13,8 +13,15 @@ test('--through stops at the first name containing the text; --repeat runs it ov
   assert.deepEqual(selectScenarios(names, ['--through', 'record', '--repeat', '3']), { selected: names.slice(0, 2), repeat: 3 })
 })
 
+test('--only keeps the scenarios whose names contain the text, in order, and nothing before them', () => {
+  assert.deepEqual(selectScenarios(names, ['--only', ' a ', '--repeat', '2']), { selected: ['open a folder', 'add a record'], repeat: 2 })
+  assert.deepEqual(selectScenarios(names, ['--only', 'search']), { selected: ['search'], repeat: 1 })
+})
+
 test('mistakes in the options are said, not guessed at', () => {
   assert.throws(() => selectScenarios(names, ['--throgh', 'x']), /unknown option: --throgh/)
+  assert.throws(() => selectScenarios(names, ['--through', 'search', '--only', 'search']), /give one of them/)
+  assert.throws(() => selectScenarios(names, ['--only', 'nothing like it']), /no scenario name contains/)
   assert.throws(() => selectScenarios(names, ['--repeat', '0']), /whole number/)
   assert.throws(() => selectScenarios(names, ['--through', 'nothing like it']), /no scenario name contains/)
 })
@@ -62,6 +69,22 @@ test('runScenarios runs in order, stops at a failure, and says what the window s
   assert.equal(code, 1)
   assert.deepEqual(ran, ['first', 'quit', 'stop'])
   assert.match(lines.join('\n'), /✗ second\n {4}timed out waiting for the list\n {4}the window showed: Could not open/)
+})
+
+test('runScenarios keeps a picture of a failure without being asked for pictures, and says where', async () => {
+  const { mkdtempSync, readdirSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const failures = join(mkdtempSync(join(tmpdir(), 'runs-')), 'failed')
+  const lines = []
+  const app = { child: {}, cdp: { screenshot: async () => Buffer.from('png') }, quit: async () => {} }
+  const code = await runScenarios(
+    { 'opens: the list': async () => { throw new Error('no list') } },
+    { start: async () => ({ app }), argv: [], screenshots: undefined, failures, log: (l) => lines.push(l) },
+  )
+  assert.equal(code, 1)
+  assert.deepEqual(readdirSync(failures), ['FAILED-opens-the-list.png'])
+  assert.ok(lines.includes(`    picture: ${join(failures, 'FAILED-opens-the-list.png')}`))
 })
 
 test('runScenarios with --repeat starts fresh each run and counts the runs that passed', async () => {
