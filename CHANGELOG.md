@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-04
+
 ### Changed
 
 - **Breaking**: `notices` and `pin-drift` take the .NET project, not its `project.assets.json`, and
