@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-03
+
 ### Added
 
 - `notices` command: `tauri-kit-dev notices --config <file> [--strict] [--check]` writes an app's
