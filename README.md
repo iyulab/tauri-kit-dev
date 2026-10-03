@@ -119,6 +119,38 @@ npx tauri-kit-dev machine [--dotnet]
 On Windows, the Rust toolchain must be MSVC; with `--dotnet`, a per-user .NET install needs
 `DOTNET_ROOT` for a bundled .NET helper process.
 
+## Third-party notices
+
+```sh
+npx tauri-kit-dev notices --config notices.config.js [--strict] [--check]
+```
+
+Writes the notices an installer ships next to the app: every package the app's package managers
+say it ships — the web UI's npm packages, the shell's crates, a bundled .NET helper's NuGet
+packages — with the license texts each carries, or the text pinned for one that publishes without
+it. The config names where each is described, relative to its own folder:
+
+```js
+// notices.config.js
+export default {
+  out: 'notices/out/THIRD-PARTY-NOTICES.txt',
+  title: 'My App — third-party notices',
+  npm: { lock: 'package-lock.json', installedAt: '.' },
+  cargo: { cwd: 'src-tauri', target: 'x86_64-pc-windows-msvc' }, // the targets the app is built for
+  nuget: { assets: 'helper/obj/project.assets.json' },             // after a restore
+  pinned: { pins: 'notices/pins.json', dir: 'notices/texts' },
+  // render: (packages) => '…',  // a document of your own instead of the default one
+}
+```
+
+A pin that applies to no shipped package, or a pinned text that is missing or not the one pinned,
+fails. `--strict` also fails on a package left without a license text — for a release that goes
+out to the public; without it, those are listed. `--check` writes nothing and fails when the file
+is not what would be written. `npx tauri-kit-dev notice-pins --pins notices/pins.json --dir
+notices/texts` downloads the pinned texts and records their SHA-256. The pieces are exported from
+`@iyulab/tauri-kit-dev/notices` (`shippedNotices`, `noticesText`, the readers) for a document
+composed differently.
+
 ## Checking public text
 
 ```sh

@@ -423,3 +423,45 @@ export function writeOrCheck(file, body, { check = false } = {}) {
   writeFileSync(file, body, 'utf8')
   return true
 }
+
+// An app's notices, whole — what `tauri-kit-dev notices` runs.
+//
+// The readers, the pinned texts and the rules for when a pin is wrong are this module's; an app that
+// assembled them itself would restate those rules, and its messages, in a script of its own. These
+// gather what every package manager the app names says it ships, fill in the pinned texts, and say
+// what is wrong — leaving which document to render from it to the caller.
+
+/**
+ * Where an app's shipped packages are described: each package manager it uses, and its pinned texts.
+ *
+ * @typedef {{
+ *   npm?: { lock: string, installedAt?: string },
+ *   cargo?: { cwd: string, target?: string },
+ *   nuget?: { assets: string },
+ *   pinned?: { pins: string | Record<string, Pin>, dir: string },
+ * }} NoticeSources
+ */
+
+/**
+ * Every package an app ships, with its pinned texts filled in, and what is wrong: a pin that applies to
+ * no shipped package, a pinned text that is missing or not the one pinned, and — with `strict`, for a
+ * release that goes out to the public — a package left without a license text.
+ *
+ * @param {NoticeSources & { strict?: boolean }} sources
+ * @returns {{ packages: Package[], missing: Package[], failures: string[] }}
+ */
+export function shippedNotices({ npm, cargo, nuget, pinned, strict = false }) {
+  const shipped = [
+    ...(npm ? npmPackages(npm) : []),
+    ...(cargo ? cargoPackages(cargo) : []),
+    ...(nuget ? nugetPackages(nuget) : []),
+  ]
+  const { packages, unused, problems } = pinned ? applyPinned(shipped, pinned) : { packages: shipped, unused: [], problems: [] }
+  const missing = withoutText(packages)
+  const failures = [
+    ...unused.map((key) => `pin ${key} applies to no shipped package — remove it, or pin the version now shipped`),
+    ...problems.map(({ key, problem }) => `pin ${key}: ${problem}`),
+    ...(strict ? missing.map((p) => `${p.name} ${p.version} ships without its license text — pin it`) : []),
+  ]
+  return { packages, missing, failures }
+}

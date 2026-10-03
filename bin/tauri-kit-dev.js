@@ -13,6 +13,15 @@
 //       fails unless a waiver with an unexpired date covers it. --assets is the restored
 //       project.assets.json; --waivers a JSON list of { package, until, reason }. Exits 1 on drift.
 //
+//   notices --config <file> [--strict] [--check]
+//       Writes an app's third-party notices: every package its package managers say it ships, with
+//       the license texts each carries or the one pinned for it. --config names a module exporting
+//       { out, title?, render?, npm?, cargo?, nuget?, pinned? } — see shippedNotices in
+//       src/notices.js; paths in it are relative to the module's folder, and render(packages)
+//       returns the document when noticesText's is not the one wanted. --strict also fails on a
+//       package left without a license text (for a public release); --check writes nothing and
+//       fails when the file is not what would be written. Exits 1 on a failure.
+//
 //   notice-pins --pins <file> --dir <dir>
 //       Downloads the pinned license texts (see applyPinned in src/notices.js) into --dir. A pin
 //       given only its source gets the SHA-256 of what was downloaded, written back to --pins; a
@@ -33,11 +42,11 @@
 //       Installs and starts the app in Windows Sandbox with networking off. --prepare only lays out
 //       the folder and the .wsb file. Exits 1 when the run did not pass.
 
-import { readFileSync } from 'node:fs'
-import { relative } from 'node:path'
+import { mkdirSync, readFileSync } from 'node:fs'
+import { dirname, relative, resolve } from 'node:path'
 import { parseArgs } from '../src/args.js'
 import { loadGateConfig, runGate } from '../src/gate.js'
-import { fetchPinned } from '../src/notices.js'
+import { fetchPinned, noticesText, shippedNotices, writeOrCheck } from '../src/notices.js'
 import { checkPinDrift, formatLine } from '../src/pin-drift.js'
 import { checkMachine } from '../src/machine.js'
 import { checkRepo, loadConfig } from '../src/public-text.js'
@@ -45,6 +54,7 @@ import { runInSandbox } from '../src/sandbox.js'
 
 const USAGE = `usage: tauri-kit-dev gate --config <file> [--list] [--only a,b] [--skip c] [--<flag>]
        tauri-kit-dev pin-drift --props <file> --assets <file> --publisher <name> [--max-minor-gap <n>] [--waivers <file>]
+       tauri-kit-dev notices --config <file> [--strict] [--check]
        tauri-kit-dev notice-pins --pins <file> --dir <dir>
        tauri-kit-dev public-text [--config <file>] [--history] [<repo>...]
        tauri-kit-dev machine [--dotnet]
@@ -79,6 +89,37 @@ ${report.failures} package(s) drifted past the threshold (major difference or mo
   console.log(`
 Pin drift within threshold: ${report.pinned} pinned, ${report.transitive} transitive.`)
   return 0
+}
+
+async function notices(argv) {
+  const args = parseArgs(argv, { flags: ['--strict', '--check'], options: ['--config'] })
+  const file = args.options['--config']
+  if (!file) throw new Error(`notices needs --config <file>
+${USAGE}`)
+  const config = await loadConfig(file)
+  if (!config.out) throw new Error(`${file} does not export { out }`)
+  const at = (path) => resolve(dirname(resolve(file)), path)
+  const strict = args.flags.has('--strict')
+  const { packages, missing, failures } = shippedNotices({
+    npm: config.npm && { ...config.npm, lock: at(config.npm.lock), installedAt: config.npm.installedAt && at(config.npm.installedAt) },
+    cargo: config.cargo && { ...config.cargo, cwd: at(config.cargo.cwd) },
+    nuget: config.nuget && { assets: at(config.nuget.assets) },
+    pinned: config.pinned && {
+      pins: typeof config.pinned.pins === 'string' ? at(config.pinned.pins) : config.pinned.pins,
+      dir: at(config.pinned.dir),
+    },
+    strict,
+  })
+  const out = at(config.out)
+  const body = config.render ? config.render(packages) : noticesText(packages, { title: config.title })
+  const check = args.flags.has('--check')
+  if (!check) mkdirSync(dirname(out), { recursive: true })
+  const current = writeOrCheck(out, body, { check })
+  console.log(`notices: ${packages.length} packages, ${missing.length} without a license text → ${out}`)
+  if (!strict) for (const p of missing) console.warn(`  without a license text: ${p.name} ${p.version}`)
+  if (!current) failures.push(`${out} is not what would be written — run without --check`)
+  for (const f of failures) console.error(`  ✗ ${f}`)
+  return failures.length ? 1 : 0
 }
 
 async function noticePins(argv) {
@@ -150,7 +191,7 @@ async function sandbox(argv) {
   return 0
 }
 
-const commands = { gate, 'notice-pins': noticePins, 'pin-drift': pinDrift, 'public-text': publicText, machine, sandbox }
+const commands = { gate, notices, 'notice-pins': noticePins, 'pin-drift': pinDrift, 'public-text': publicText, machine, sandbox }
 
 async function main([command, ...rest]) {
   const run = commands[command]

@@ -274,3 +274,50 @@ test('writeOrCheck writes, then reports whether the file still matches', () => {
   assert.equal(writeOrCheck(file, 'two', { check: true }), false)
   assert.equal(readFileSync(file, 'utf8'), 'one')
 })
+
+test('the notices command writes an app’s notices from its config, and fails on what is wrong with them', async () => {
+  const { spawnSync } = await import('node:child_process')
+  const { createHash } = await import('node:crypto')
+  const dir = scratch()
+  const app = join(dir, 'app')
+  mkdirSync(join(app, 'node_modules', 'a'), { recursive: true })
+  writeFileSync(
+    join(app, 'package-lock.json'),
+    JSON.stringify({ packages: { '': { name: 'app' }, 'node_modules/a': { version: '1.0.0', license: 'MIT' }, 'node_modules/b': { version: '2.0.0', license: 'ISC' } } }),
+  )
+  writeFileSync(join(app, 'node_modules', 'a', 'LICENSE'), 'Copyright (c) A\n')
+  mkdirSync(join(app, 'notices', 'texts'), { recursive: true })
+  writeFileSync(join(app, 'notices', 'texts', 'b@2.0.0.txt'), 'Copyright (c) B')
+  const sha256 = createHash('sha256').update('Copyright (c) B').digest('hex')
+  const pins = (more = {}) =>
+    writeFileSync(join(app, 'notices', 'pins.json'), JSON.stringify({ 'b@2.0.0': { source: 'https://src/b/LICENSE', sha256 }, ...more }))
+  pins()
+  // Paths are the config's own, relative to its folder: the command runs from anywhere.
+  writeFileSync(
+    join(app, 'notices.config.mjs'),
+    `export default { out: 'out/NOTICES.txt', title: 'App — notices', npm: { lock: 'package-lock.json', installedAt: '.' }, pinned: { pins: 'notices/pins.json', dir: 'notices/texts' } }\n`,
+  )
+  const run = (...args) => spawnSync(process.execPath, [join(import.meta.dirname, '..', 'bin', 'tauri-kit-dev.js'), 'notices', '--config', join(app, 'notices.config.mjs'), ...args], { cwd: dir, encoding: 'utf8' })
+
+  const written = run('--strict')
+  assert.equal(written.status, 0, written.stderr)
+  assert.match(written.stdout, /notices: 2 packages, 0 without a license text/)
+  const text = readFileSync(join(app, 'out', 'NOTICES.txt'), 'utf8')
+  assert.match(text, /^App — notices\n/)
+  assert.match(text, /b 2\.0\.0\nLicense: ISC\nUpstream: https:\/\/www\.npmjs\.com\/package\/b\nLicense text from: https:\/\/src\/b\/LICENSE\n\nCopyright \(c\) B/)
+  assert.equal(run('--check').status, 0, 'the file is what would be written')
+
+  // A pin no shipped package uses, and a package left without a text: the first always fails, the second with --strict.
+  pins({ 'c@3.0.0': { source: 'https://src/c/LICENSE', sha256 } })
+  writeFileSync(join(app, 'node_modules', 'a', 'LICENSE'), '')
+  const stale = run('--check')
+  assert.equal(stale.status, 1)
+  assert.match(stale.stderr, /pin c@3\.0\.0 applies to no shipped package/)
+  assert.match(stale.stderr, /is not what would be written/)
+  assert.match(stale.stderr, /without a license text: a 1\.0\.0/)
+  pins()
+  assert.equal(run().status, 0, 'without --strict a package without a text is only a warning')
+  const strict = run('--strict')
+  assert.equal(strict.status, 1)
+  assert.match(strict.stderr, /a 1\.0\.0 ships without its license text — pin it/)
+})

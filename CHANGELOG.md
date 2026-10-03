@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Added
+
+- `notices` command: `tauri-kit-dev notices --config <file> [--strict] [--check]` writes an app's
+  third-party notices from a config naming its npm lockfile, crate folder and target, restored
+  NuGet assets and pinned texts (paths relative to the config). A pin that applies to no shipped
+  package or a pinned text that is not the pinned one fails; `--strict` also fails on a package
+  without a license text; `--check` compares instead of writing. The config's `render(packages)`
+  replaces the default document. An app no longer assembles the readers, the pins and these rules
+  in a script of its own. The assembly is exported as `shippedNotices(sources)`.
+
 ### Documentation
 
 - README: a development build keeps reading a bundled resource file after it is removed from the
