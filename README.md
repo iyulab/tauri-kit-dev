@@ -152,9 +152,13 @@ A pin that applies to no shipped package, or a pinned text that is missing or no
 fails. `--strict` also fails on a package left without a license text — for a release that goes
 out to the public; without it, those are listed. `--check` writes nothing and fails when the file
 is not what would be written. `npx tauri-kit-dev notice-pins --pins notices/pins.json --dir
-notices/texts` downloads the pinned texts and records their SHA-256. The pieces are exported from
-`@iyulab/tauri-kit-dev/notices` (`shippedNotices`, `noticesText`, the readers) for a document
-composed differently.
+notices/texts` downloads the pinned texts and records their SHA-256. `npx tauri-kit-dev
+notice-pins --config notices.config.js` first finds a pin for each package still without a text —
+its license file at the commit it was published from (recorded by `cargo publish`, a nuspec, or an
+npm manifest) or else at its release tag, never a branch — adds those, fetches them, and names the
+packages it could not find one for. Read what it found before committing it. The pieces are
+exported from `@iyulab/tauri-kit-dev/notices` (`shippedNotices`, `noticesText`, `suggestPins`, the
+readers) for a document composed differently.
 
 ## Checking public text
 

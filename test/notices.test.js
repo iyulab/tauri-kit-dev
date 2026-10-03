@@ -15,6 +15,7 @@ import {
   noticesText,
   npmPackages,
   nugetPackages,
+  suggestPins,
   withoutText,
   writeOrCheck,
 } from '../src/notices.js'
@@ -78,7 +79,7 @@ test('a crate carries the license texts in its folder, and the workspace’s own
       pkg('app-core', folder('app-core', { LICENSE: 'own code' })),
       pkg('dual', folder('dual', { 'LICENSE-MIT': 'Copyright (c) Dual\r\n\r\nPermission …\r\n', 'LICENSE-APACHE': 'Apache License' })),
       pkg('odd', folder('odd', { 'TERMS.txt': 'Copyright (c) Odd' }), { license: null, license_file: 'TERMS.txt' }),
-      pkg('bare', folder('bare', {})),
+      pkg('bare', folder('bare', { '.cargo_vcs_info.json': '{"git":{"sha1":"abc123"},"path_in_vcs":"crates/bare"}' })),
     ],
     resolve: {
       root: 'app',
@@ -93,6 +94,47 @@ test('a crate carries the license texts in its folder, and the workspace’s own
   assert.deepEqual(packages.find((p) => p.name === 'dual').texts, ['Apache License', 'Copyright (c) Dual\n\nPermission …'])
   assert.deepEqual(packages.find((p) => p.name === 'odd').texts, ['Copyright (c) Odd'])
   assert.deepEqual(withoutText(packages).map((p) => p.name), ['bare'])
+  // The commit and folder `cargo publish` recorded; a crate without the record has no `vcs`.
+  assert.deepEqual(packages.find((p) => p.name === 'bare').vcs, { commit: 'abc123', path: 'crates/bare' })
+  assert.equal(packages.find((p) => p.name === 'dual').vcs, undefined)
+})
+
+test('a pin is suggested from the source at the version that shipped, never a branch', async () => {
+  const exists = new Set([
+    // At the commit the crate was published from, in its own folder.
+    'https://raw.githubusercontent.com/o/rs/abc123/crates/bare/LICENSE-MIT',
+    // A root license at a release tag, for a package that names no commit.
+    'https://raw.githubusercontent.com/o/js/v2.0.0/LICENSE',
+    // A scoped npm package tagged with its name.
+    'https://raw.githubusercontent.com/o/mono/%40s/c%403.0.0/packages/c/LICENSE',
+    // Only on the default branch: not what the version shipped with.
+    'https://raw.githubusercontent.com/o/gone/main/LICENSE',
+  ])
+  const asked = []
+  const fetch = async (url, init) => {
+    asked.push(url)
+    assert.equal(init.method, 'HEAD')
+    return { ok: exists.has(url) }
+  }
+  const packages = [
+    { name: 'bare', version: '1.0.0', license: 'MIT OR Apache-2.0', url: 'https://github.com/o/rs', texts: [], vcs: { commit: 'abc123', path: 'crates/bare' } },
+    { name: 'js', version: '2.0.0', license: 'ISC', url: 'git+https://github.com/o/js.git', texts: [] },
+    { name: '@s/c', version: '3.0.0', license: 'MIT', url: 'https://github.com/o/mono', texts: [], vcs: { path: 'packages/c' } },
+    { name: 'gone', version: '1.0.0', license: 'MIT', url: 'https://github.com/o/gone', texts: [] },
+    { name: 'elsewhere', version: '1.0.0', license: 'MIT', url: 'https://gitlab.com/o/elsewhere', texts: [] },
+    { name: 'carries', version: '1.0.0', license: 'MIT', url: 'https://github.com/o/carries', texts: ['Copyright'] },
+  ]
+  const { pins, unresolved } = await suggestPins(packages, { fetch })
+  assert.deepEqual(pins, {
+    'bare@1.0.0': { source: 'https://raw.githubusercontent.com/o/rs/abc123/crates/bare/LICENSE-MIT' },
+    'js@2.0.0': { source: 'https://raw.githubusercontent.com/o/js/v2.0.0/LICENSE' },
+    '@s/c@3.0.0': { source: 'https://raw.githubusercontent.com/o/mono/%40s/c%403.0.0/packages/c/LICENSE' },
+  })
+  assert.deepEqual(unresolved, ['gone@1.0.0', 'elsewhere@1.0.0'])
+  // With a commit, no tag is tried; a branch never is; a package carrying its text is not looked up.
+  assert.ok(!asked.some((u) => u.includes('/o/rs/v1.0.0/')))
+  assert.ok(!asked.some((u) => /\/(main|master)\//.test(u)))
+  assert.ok(!asked.some((u) => u.includes('/o/carries/') || u.includes('gitlab')))
 })
 
 test('the npm closure leaves out dev dependencies and links, and fills in from installed manifests', () => {
@@ -134,7 +176,7 @@ test('NuGet packages count only when they put assets into the build', () => {
     mkdirSync(join(folder, id, version), { recursive: true })
     writeFileSync(join(folder, id, version, `${id}.nuspec`), `<package><metadata>${body}</metadata></package>`)
   }
-  nuspec('lib.a', '1.0.0', '<license type="expression">MIT</license><repository type="git" url="https://github.com/x/a.git" />')
+  nuspec('lib.a', '1.0.0', '<license type="expression">MIT</license><repository type="git" url="https://github.com/x/a.git" commit="def456" />')
   nuspec('lib.b', '2.0.0', '<license type="file">LICENSE.txt</license>')
   writeFileSync(join(folder, 'lib.b', '2.0.0', 'LICENSE.txt'), 'MIT License\n\nCopyright …')
   writeFileSync(join(folder, 'lib.b', '2.0.0', 'NOTICE'), 'not the file the nuspec names')
@@ -158,7 +200,7 @@ test('NuGet packages count only when they put assets into the build', () => {
     }),
   )
   assert.deepEqual(nugetPackages({ assets: join(dir, 'project.assets.json') }), [
-    { name: 'Lib.A', version: '1.0.0', license: 'MIT', url: 'https://github.com/x/a', texts: ['Copyright (c) A', 'notices of what it bundles'] },
+    { name: 'Lib.A', version: '1.0.0', license: 'MIT', url: 'https://github.com/x/a', texts: ['Copyright (c) A', 'notices of what it bundles'], vcs: { commit: 'def456' } },
     { name: 'Lib.B', version: '2.0.0', license: 'MIT', url: 'https://www.nuget.org/packages/Lib.B', texts: ['MIT License\n\nCopyright …'] },
     { name: 'Lib.C', version: '3.0.0', license: 'see https://example.com/license', url: 'https://www.nuget.org/packages/Lib.C', texts: [] },
   ])

@@ -24,7 +24,10 @@
 // notices ship with them. Most permissive licenses make keeping that text — with its copyright
 // line — the condition itself, so an identifier alone does not satisfy them: `withoutText` lists the
 // packages that carry none, `applyPinned` fills those in from texts pinned at the same version of
-// their source, and `noticesText` renders a document that includes every text.
+// their source, and `noticesText` renders a document that includes every text. A package whose
+// published form says where in its source it came from also gets `vcs` — the commit (a crate's
+// `.cargo_vcs_info.json`, a nuspec's `repository commit`, an npm manifest's `gitHead`) and the
+// folder within the repository — which `suggestPins` uses to find the text at that same version.
 
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -32,8 +35,13 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { dirname, join } from 'node:path'
 
 /**
- * @typedef {{ name: string, version: string, license: string, url: string, texts: string[], textSource?: string }} Package
+ * @typedef {{ commit?: string, path?: string }} Vcs
+ * @typedef {{ name: string, version: string, license: string, url: string, texts: string[], textSource?: string, vcs?: Vcs }} Package
  */
+
+/** `vcs` when the published package names a commit or a folder, nothing otherwise. */
+const withVcs = (pkg, commit, path) =>
+  commit || path ? { ...pkg, vcs: { ...(commit ? { commit } : {}), ...(path ? { path } : {}) } } : pkg
 
 const LICENSE_FILE = /^(?:licen[cs]e|copying|notice)(?:[-._].*)?$/i
 const THIRD_PARTY_FILE = /^third[-_ ]?party[-_ ]?notices?(?:[-._].*)?$/i
@@ -156,13 +164,19 @@ export function cargoPackages({ cwd, target, metadata }) {
       const dir = p.manifest_path ? dirname(p.manifest_path) : null
       const texts = licenseTexts(dir)
       if (!texts.length && dir && p.license_file && existsSync(join(dir, p.license_file))) texts.push(readText(join(dir, p.license_file)))
-      return {
-        name: p.name,
-        version: p.version,
-        license: p.license ?? '(not declared)',
-        url: p.repository ?? `https://crates.io/crates/${p.name}`,
-        texts,
-      }
+      // `cargo publish` records the commit it packaged and the crate's folder in the repository.
+      const info = dir && existsSync(join(dir, '.cargo_vcs_info.json')) ? JSON.parse(readFileSync(join(dir, '.cargo_vcs_info.json'), 'utf8')) : {}
+      return withVcs(
+        {
+          name: p.name,
+          version: p.version,
+          license: p.license ?? '(not declared)',
+          url: p.repository ?? `https://crates.io/crates/${p.name}`,
+          texts,
+        },
+        info.git?.sha1,
+        info.path_in_vcs,
+      )
     })
     .sort(byNameThenVersion)
 }
@@ -195,13 +209,19 @@ export function npmPackages({ lock, installedAt = null }) {
       manifest.license ??
       (Array.isArray(manifest.licenses) ? manifest.licenses.map((l) => l.type).join(' OR ') : null)
     const repo = typeof manifest.repository === 'string' ? manifest.repository : manifest.repository?.url
-    packages.push({
-      name,
-      version: entry.version ?? manifest.version ?? '(unknown)',
-      license: typeof declared === 'string' ? declared : '(not declared)',
-      url: (repo ?? `https://www.npmjs.com/package/${name}`).replace(/^git\+/, '').replace(/\.git$/, ''),
-      texts: installedAt ? licenseTexts(join(installedAt, path)) : [],
-    })
+    packages.push(
+      withVcs(
+        {
+          name,
+          version: entry.version ?? manifest.version ?? '(unknown)',
+          license: typeof declared === 'string' ? declared : '(not declared)',
+          url: (repo ?? `https://www.npmjs.com/package/${name}`).replace(/^git\+/, '').replace(/\.git$/, ''),
+          texts: installedAt ? licenseTexts(join(installedAt, path)) : [],
+        },
+        manifest.gitHead,
+        typeof manifest.repository === 'object' ? manifest.repository?.directory : undefined,
+      ),
+    )
   }
   return packages.sort(byNameThenVersion)
 }
@@ -271,7 +291,8 @@ function nugetPackage(folder, name, version) {
   const licenseUrl = nuspec.match(/<licenseUrl>([^<]+)<\/licenseUrl>/)?.[1]?.trim()
   const repo =
     nuspec.match(/<repository\b[^>]*\burl="([^"]+)"/)?.[1] ?? nuspec.match(/<projectUrl>([^<]+)<\/projectUrl>/)?.[1]
-  return {
+  const commit = nuspec.match(/<repository\b[^>]*\bcommit="([^"]+)"/)?.[1]
+  return withVcs({
     name,
     version,
     license:
@@ -286,7 +307,7 @@ function nugetPackage(folder, name, version) {
       licenseFile && existsSync(join(dir, licenseFile))
         ? [readText(join(dir, licenseFile)), ...textsMatching(dir, THIRD_PARTY_FILE)]
         : licenseTexts(dir),
-  }
+  }, commit)
 }
 
 /** A Markdown table of packages. @param {Package[]} packages */
@@ -439,6 +460,72 @@ export async function fetchPinned({ pins, dir, fetch = globalThis.fetch }) {
     if (pinned.length && typeof pins === 'string') writeFileSync(pins, `${JSON.stringify(table, null, 2)}\n`)
   }
   return { fetched, pinned }
+}
+
+// Finding the text to pin — the same version of the package's source, not its default branch.
+//
+// The commit a package was published from is the exact answer, and most published forms record it
+// (`vcs`). Without one, a release tag is the next best, tried in the spellings projects use. A
+// branch is never tried: what it holds today is not what that version shipped with. Only GitHub
+// sources are looked up; any other host is reported as unresolved, for a person to pin.
+
+const GITHUB = /^(?:git\+)?(?:https?|git|ssh):\/\/(?:git@)?github\.com[/:]([^/]+)\/([^/#?]+?)(?:\.git)?(?:[/#?].*)?$/i
+
+/** The license file names to try for an expression, its own identifiers' files first. */
+function licenseFileNames(expression) {
+  const names = []
+  for (const id of licenseIdentifiers(expression)) {
+    if (id === 'MIT') names.push('LICENSE-MIT', 'LICENSE-MIT.md', 'LICENSE-MIT.txt')
+    if (id === 'Apache-2.0') names.push('LICENSE-APACHE', 'LICENSE-APACHE.md', 'LICENSE-APACHE.txt')
+    names.push(`LICENSES/${id}.txt`)
+  }
+  return [...new Set([...names, 'LICENSE', 'LICENSE.md', 'LICENSE.txt', 'LICENSE.TXT', 'COPYING'])]
+}
+
+/** The refs to look at a package's source under: its commit, or else its release tags. */
+function sourceRefs(p) {
+  if (p.vcs?.commit) return [p.vcs.commit]
+  return [`v${p.version}`, p.version, `${p.name}@${p.version}`, `${p.name}-v${p.version}`, `${p.name}-${p.version}`]
+}
+
+/**
+ * Finds, for each package without a license text, the license file in its source at the version it
+ * shipped — `{ "<name>@<version>": { source } }`, ready to merge into the pins and fetch with
+ * `fetchPinned` — and lists the packages it found nothing for. A package's own folder in its
+ * repository (`vcs.path`) is tried before the repository's root. The pins are suggestions: a
+ * person still reads what was found before committing it.
+ *
+ * @param {Package[]} packages those without a text are looked up; the rest are skipped
+ * @param {{ fetch?: typeof globalThis.fetch }} [options]
+ * @returns {Promise<{ pins: Record<string, PinnedFile>, unresolved: string[] }>}
+ */
+export async function suggestPins(packages, { fetch = globalThis.fetch } = {}) {
+  const pins = {}
+  const unresolved = []
+  for (const p of withoutText(packages)) {
+    const key = `${p.name}@${p.version}`
+    const [, owner, repo] = p.url.match(GITHUB) ?? []
+    let source = null
+    if (owner) {
+      const dirs = [...new Set([p.vcs?.path, ''].filter((d) => d !== undefined))]
+      search: for (const ref of sourceRefs(p)) {
+        const at = encodeURIComponent(ref).replace(/%2F/gi, '/')
+        for (const dir of dirs) {
+          for (const name of licenseFileNames(p.license)) {
+            const url = `https://raw.githubusercontent.com/${owner}/${repo}/${at}/${dir ? `${dir}/` : ''}${name}`
+            const response = await fetch(url, { method: 'HEAD' }).catch(() => null)
+            if (response?.ok) {
+              source = url
+              break search
+            }
+          }
+        }
+      }
+    }
+    if (source) pins[key] = { source }
+    else unresolved.push(key)
+  }
+  return { pins, unresolved }
 }
 
 /**

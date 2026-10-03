@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Added
+
+- `notice-pins --config <file>` (the notices config) looks up a pin for every shipped package still
+  without a license text — its license file in its source at the version that shipped — adds what
+  it found to the config's pins, fetches them, and names the packages it found nothing for. The
+  commit a package was published from is used when its published form records one (a crate's
+  `.cargo_vcs_info.json`, a nuspec's `repository commit`, an npm manifest's `gitHead`), with the
+  package's own folder in the repository tried before the root; otherwise its release tags. A branch
+  is never tried. GitHub sources only. Exported as `suggestPins(packages)`; the readers return the
+  recorded commit and folder as `vcs`.
+
 ### Fixed
 
 - `notices`: a .NET helper published self-contained or ahead of time ships the runtime of each

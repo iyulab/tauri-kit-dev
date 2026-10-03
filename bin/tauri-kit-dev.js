@@ -22,10 +22,13 @@
 //       package left without a license text (for a public release); --check writes nothing and
 //       fails when the file is not what would be written. Exits 1 on a failure.
 //
-//   notice-pins --pins <file> --dir <dir>
+//   notice-pins (--config <file> | --pins <file> --dir <dir>)
 //       Downloads the pinned license texts (see applyPinned in src/notices.js) into --dir. A pin
 //       given only its source gets the SHA-256 of what was downloaded, written back to --pins; a
-//       pinned text whose source no longer matches its SHA-256 is an error. Exits 2 on an error.
+//       pinned text whose source no longer matches its SHA-256 is an error. With --config (the
+//       notices config), first looks up a pin for every shipped package still without a text — its
+//       license file at the commit or tag it was published from (see suggestPins) — adds those to
+//       the config's pins, and names the packages it found nothing for. Exits 2 on an error.
 //
 //   public-text [--config <file>] [--history] [<repo>...]
 //       Checks git repositories (default: the current one) for text a public repository must not
@@ -42,11 +45,11 @@
 //       Installs and starts the app in Windows Sandbox with networking off. --prepare only lays out
 //       the folder and the .wsb file. Exits 1 when the run did not pass.
 
-import { mkdirSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, relative, resolve } from 'node:path'
 import { parseArgs } from '../src/args.js'
 import { loadGateConfig, runGate } from '../src/gate.js'
-import { fetchPinned, noticesText, shippedNotices, writeOrCheck } from '../src/notices.js'
+import { fetchPinned, noticesText, shippedNotices, suggestPins, writeOrCheck } from '../src/notices.js'
 import { checkPinDrift, formatLine } from '../src/pin-drift.js'
 import { checkMachine } from '../src/machine.js'
 import { checkRepo, loadConfig } from '../src/public-text.js'
@@ -55,7 +58,7 @@ import { runInSandbox } from '../src/sandbox.js'
 const USAGE = `usage: tauri-kit-dev gate --config <file> [--list] [--only a,b] [--skip c] [--<flag>]
        tauri-kit-dev pin-drift --props <file> --assets <file> --publisher <name> [--max-minor-gap <n>] [--waivers <file>]
        tauri-kit-dev notices --config <file> [--strict] [--check]
-       tauri-kit-dev notice-pins --pins <file> --dir <dir>
+       tauri-kit-dev notice-pins (--config <file> | --pins <file> --dir <dir>)
        tauri-kit-dev public-text [--config <file>] [--history] [<repo>...]
        tauri-kit-dev machine [--dotnet]
        tauri-kit-dev sandbox <installer> --exe <file> [--identifier <id>] [--extra <script>] [--without-webview2] [--prepare]`
@@ -91,25 +94,34 @@ Pin drift within threshold: ${report.pinned} pinned, ${report.transitive} transi
   return 0
 }
 
+/** A notices config with its paths resolved against its own folder. */
+async function noticeSources(file) {
+  const config = await loadConfig(file)
+  const at = (path) => resolve(dirname(resolve(file)), path)
+  return {
+    config,
+    at,
+    sources: {
+      npm: config.npm && { ...config.npm, lock: at(config.npm.lock), installedAt: config.npm.installedAt && at(config.npm.installedAt) },
+      cargo: config.cargo && { ...config.cargo, cwd: at(config.cargo.cwd) },
+      nuget: config.nuget && { assets: at(config.nuget.assets) },
+      pinned: config.pinned && {
+        pins: typeof config.pinned.pins === 'string' ? at(config.pinned.pins) : config.pinned.pins,
+        dir: at(config.pinned.dir),
+      },
+    },
+  }
+}
+
 async function notices(argv) {
   const args = parseArgs(argv, { flags: ['--strict', '--check'], options: ['--config'] })
   const file = args.options['--config']
   if (!file) throw new Error(`notices needs --config <file>
 ${USAGE}`)
-  const config = await loadConfig(file)
+  const { config, at, sources } = await noticeSources(file)
   if (!config.out) throw new Error(`${file} does not export { out }`)
-  const at = (path) => resolve(dirname(resolve(file)), path)
   const strict = args.flags.has('--strict')
-  const { packages, missing, failures } = shippedNotices({
-    npm: config.npm && { ...config.npm, lock: at(config.npm.lock), installedAt: config.npm.installedAt && at(config.npm.installedAt) },
-    cargo: config.cargo && { ...config.cargo, cwd: at(config.cargo.cwd) },
-    nuget: config.nuget && { assets: at(config.nuget.assets) },
-    pinned: config.pinned && {
-      pins: typeof config.pinned.pins === 'string' ? at(config.pinned.pins) : config.pinned.pins,
-      dir: at(config.pinned.dir),
-    },
-    strict,
-  })
+  const { packages, missing, failures } = shippedNotices({ ...sources, strict })
   const out = at(config.out)
   const body = config.render ? config.render(packages) : noticesText(packages, { title: config.title })
   const check = args.flags.has('--check')
@@ -123,9 +135,25 @@ ${USAGE}`)
 }
 
 async function noticePins(argv) {
-  const args = parseArgs(argv, { options: ['--pins', '--dir'] })
-  const { '--pins': pins, '--dir': dir } = args.options
-  if (!pins || !dir) throw new Error(`--pins and --dir are required
+  const args = parseArgs(argv, { options: ['--pins', '--dir', '--config'] })
+  let { '--pins': pins, '--dir': dir } = args.options
+  const file = args.options['--config']
+  if (file) {
+    // Look up a pin for every shipped package still without a text, add what was found, then fetch.
+    const { sources } = await noticeSources(file)
+    if (!sources.pinned || typeof sources.pinned.pins !== 'string') throw new Error(`${file} needs { pinned: { pins: '<file>', dir } }`)
+    ;({ pins, dir } = sources.pinned)
+    const { packages } = shippedNotices(sources)
+    const { pins: found, unresolved } = await suggestPins(packages)
+    if (Object.keys(found).length) {
+      const table = existsSync(pins) ? JSON.parse(readFileSync(pins, 'utf8')) : {}
+      writeFileSync(pins, `${JSON.stringify({ ...table, ...found }, null, 2)}\n`)
+    }
+    for (const [key, { source }] of Object.entries(found)) console.log(`  ? ${key} → ${source}`)
+    for (const key of unresolved) console.warn(`  ✗ ${key}: no license file found at its version — pin it by hand`)
+    if (Object.keys(found).length) console.log(`${Object.keys(found).length} pin(s) added to ${pins} — read the texts before committing them.`)
+  }
+  if (!pins || !dir) throw new Error(`notice-pins needs --config <file>, or --pins and --dir
 ${USAGE}`)
   const { fetched, pinned } = await fetchPinned({ pins, dir })
   for (const source of pinned) console.log(`  + ${source} pinned`)
