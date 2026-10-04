@@ -230,6 +230,20 @@ test('the nuget source reads the graph the restore of its project just wrote', (
   assert.deepEqual(restored, ['Helper.csproj'])
 })
 
+test('the nuget source restores with the properties the helper is published with', () => {
+  const dir = scratch()
+  writeFileSync(join(dir, 'project.assets.json'), JSON.stringify({ packageFolders: { [dir + '/']: {} }, targets: { 'net10.0': {} } }))
+  const restored = []
+  const restore = (project, properties) => (restored.push([project, properties]), join(dir, 'project.assets.json'))
+  const properties = { RuntimeIdentifier: 'win-x64', SelfContained: true }
+  shippedNotices({ nuget: { project: 'Helper.csproj', properties, restore } })
+  assert.deepEqual(restored, [['Helper.csproj', properties]])
+  // Without any, the restore is asked with none — not with properties of its own choosing.
+  restored.length = 0
+  shippedNotices({ nuget: { project: 'Helper.csproj', restore } })
+  assert.deepEqual(restored, [['Helper.csproj', {}]])
+})
+
 test('a self-contained helper carries the runtime packs of the frameworks it references', () => {
   const dir = scratch()
   const folder = join(dir, 'packages')

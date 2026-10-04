@@ -16,7 +16,9 @@
 //     (`project.assets.json` — the project is restored first, see dotnet.js), that put runtime or
 //     native assets into the build — for a bundled .NET helper. Meta-packages
 //     and analyzers carry none. A helper published self-contained or ahead of time also carries the
-//     runtime of each framework it references: the runtime packs the restore downloaded for it.
+//     runtime of each framework it references: the runtime packs the restore downloaded for it —
+//     which a restore only does for a runtime identifier, self-contained, so `properties` passes
+//     the ones the helper is published with.
 //
 // Every reader returns `{ name, version, license, url, texts }`, sorted by name and version.
 // `texts` holds the license texts the package itself carries (LICENSE, LICENSE-MIT, COPYING, NOTICE,
@@ -278,12 +280,18 @@ const hasFiles = (assets) => !!assets && Object.keys(assets).some((f) => !f.ends
  * reference, and a build tool such as the ahead-of-time compiler, are left out. Licenses come from
  * each package's own nuspec in the restore's package folder.
  *
- * @param {{ project: string, restore?: (project: string) => string }} options `restore` restores
+ * @param {{
+ *   project: string,
+ *   properties?: Record<string, string | boolean>,
+ *   restore?: (project: string, properties: Record<string, string | boolean>) => string,
+ * }} options `properties` are the MSBuild properties the helper is published with
+ *   (`{ RuntimeIdentifier: 'win-x64', SelfContained: true }` for `-r win-x64 --self-contained`) —
+ *   without them the restore downloads no runtime pack and those are left out; `restore` restores
  *   the project and returns its `project.assets.json`; without it, dotnet is run (`restoreAssets`).
  * @returns {Package[]}
  */
-export function nugetPackages({ project, restore = restoreAssets }) {
-  const assets = restore(project)
+export function nugetPackages({ project, properties = {}, restore = restoreAssets }) {
+  const assets = restore(project, properties)
   if (!existsSync(assets)) throw new Error(`restoring ${project} left no ${assets}`)
   const parsed = JSON.parse(readFileSync(assets, 'utf8'))
   const folder = Object.keys(parsed.packageFolders ?? {})[0]
@@ -591,7 +599,11 @@ export function writeOrCheck(file, body, { check = false } = {}) {
  * @typedef {{
  *   npm?: { lock: string, installedAt?: string },
  *   cargo?: { cwd: string, target?: string },
- *   nuget?: { project: string, restore?: (project: string) => string },
+ *   nuget?: {
+ *     project: string,
+ *     properties?: Record<string, string | boolean>,
+ *     restore?: (project: string, properties: Record<string, string | boolean>) => string,
+ *   },
  *   pinned?: { pins: string | Record<string, Pin>, dir: string },
  * }} NoticeSources
  */

@@ -7,6 +7,12 @@
 // file touched without a package change would look stale forever. Only the restore knows whether
 // its inputs changed, so the readers ask it — the way `cargo metadata` resolves before it answers.
 // With nothing to do it is a quick no-op and needs no network.
+//
+// The graph depends on how the project is restored, not only on what it declares: a helper
+// published with `-r win-x64 --self-contained` on the command line ships the runtime packs of its
+// frameworks, which only a restore for that runtime identifier, self-contained, downloads. A restore
+// without those properties reads a graph the shipped helper was not built from, so the properties
+// the helper is published with are passed to the restore as well.
 
 import { execFileSync } from 'node:child_process'
 
@@ -15,12 +21,16 @@ import { execFileSync } from 'node:child_process'
  * (`ProjectAssetsFile`), not a guessed `obj/` path.
  *
  * @param {string} project a project file (`.csproj` and the like)
+ * @param {Record<string, string | boolean>} [properties] MSBuild global properties for the restore,
+ *   as the helper is published — `{ RuntimeIdentifier: 'win-x64', SelfContained: true }` for a
+ *   `dotnet publish -r win-x64 --self-contained`
  * @returns {string} the path of the restored assets file
  */
-export function restoreAssets(project) {
+export function restoreAssets(project, properties = {}) {
   let out
   try {
-    out = execFileSync('dotnet', ['msbuild', project, '-t:Restore', '-getProperty:ProjectAssetsFile', '-nologo'], {
+    const props = Object.entries(properties).map(([name, value]) => `-p:${name}=${value}`)
+    out = execFileSync('dotnet', ['msbuild', project, '-t:Restore', ...props, '-getProperty:ProjectAssetsFile', '-nologo'], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
       maxBuffer: 16 * 1024 * 1024,

@@ -142,11 +142,19 @@ export default {
   title: 'My App — third-party notices',
   npm: { lock: 'package-lock.json', installedAt: '.' },
   cargo: { cwd: 'src-tauri', target: 'x86_64-pc-windows-msvc' }, // the targets the app is built for
-  nuget: { project: 'helper/Helper.csproj' },                      // restored first, needs dotnet
+  nuget: {
+    project: 'helper/Helper.csproj',                                // restored first, needs dotnet
+    properties: { RuntimeIdentifier: 'win-x64', SelfContained: true }, // as `dotnet publish` is given them
+  },
   pinned: { pins: 'notices/pins.json', dir: 'notices/texts' },
   // render: (packages) => '…',  // a document of your own instead of the default one
 }
 ```
+
+The .NET project is restored with `nuget.properties` as MSBuild properties — the ones the helper is
+published with. A helper published with `-r <rid> --self-contained` on the command line ships the
+runtime packs of its frameworks, and only a restore for that runtime identifier, self-contained,
+downloads them: without the properties they are missing from the notices.
 
 A pin that applies to no shipped package, or a pinned text that is missing or not the one pinned,
 fails. `--strict` also fails on a package left without a license text — for a release that goes

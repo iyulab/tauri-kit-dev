@@ -113,6 +113,15 @@ test('the project is restored before its graph is read', async () => {
   assert.deepEqual(restored, ['App.csproj'])
 })
 
+test('the restore is given the properties the app is published with', async () => {
+  const paths = fixture([['Ours.Core', '1.8.0', 'Example Co']], [['Ours.Core', '1.8.0']])
+  const restored = []
+  const restore = (project, properties) => (restored.push([project, properties]), paths.restore(project))
+  const properties = { RuntimeIdentifier: 'win-x64' }
+  await checkPinDrift({ ...paths, properties, restore, publisher: 'Example Co', latest, floors: noFloors })
+  assert.deepEqual(restored, [['App.csproj', properties]])
+})
+
 test('no pins of the publisher is an error, not a pass', async () => {
   const paths = fixture([['Theirs.Lib', '1.0.0', 'Someone']], [['Theirs.Lib', '1.0.0']])
   await assert.rejects(checkPinDrift({ ...paths, publisher: 'Example Co', latest, floors: noFloors }), /no pins of Example Co packages/)

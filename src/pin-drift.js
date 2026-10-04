@@ -113,17 +113,20 @@ export async function nugetFloors(id, version, fetchImpl = fetch) {
  *
  * @param {{
  *   props: string, project: string, publisher: string, maxMinorGap?: number,
- *   restore?: (project: string) => string,
+ *   properties?: Record<string, string | boolean>,
+ *   restore?: (project: string, properties: Record<string, string | boolean>) => string,
  *   waivers?: Waiver[], today?: string,
  *   latest?: (id: string, allowPrerelease: boolean) => Promise<string>,
  *   floors?: (id: string, version: string) => Promise<Map<string, string>>,
- * }} options `restore` restores the project and returns its `project.assets.json` (default: dotnet,
- *   `restoreAssets`); `latest` and `floors` default to asking nuget.org.
+ * }} options `properties` are MSBuild properties for the restore, as the app is published (a
+ *   runtime identifier brings in its runtime-specific packages); `restore` restores the project and
+ *   returns its `project.assets.json` (default: dotnet, `restoreAssets`); `latest` and `floors` default to asking nuget.org.
  * @returns {Promise<DriftReport>}
  */
 export async function checkPinDrift({
   props,
   project,
+  properties = {},
   restore = restoreAssets,
   publisher,
   maxMinorGap = 5,
@@ -132,7 +135,7 @@ export async function checkPinDrift({
   latest = (id, pre) => nugetLatest(id, pre),
   floors = (id, version) => nugetFloors(id, version),
 }) {
-  const assetsPath = restore(project)
+  const assetsPath = restore(project, properties)
   if (!existsSync(assetsPath)) throw new Error(`restoring ${project} left no ${assetsPath}`)
   const assets = JSON.parse(readFileSync(assetsPath, 'utf8'))
   const waivers = readWaivers(waiverList, today)

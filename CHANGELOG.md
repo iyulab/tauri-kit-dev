@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `notices` left out the .NET runtime packs of a helper published with `-r <rid> --self-contained` on
+  the command line (since 0.6.0): the project is restored without those properties, and such a
+  restore downloads no runtime pack. The restore now takes the properties the helper is published
+  with — config `nuget: { project, properties: { RuntimeIdentifier: 'win-x64', SelfContained: true } }`,
+  `pin-drift --properties "RuntimeIdentifier=win-x64"`, and `properties` on `nugetPackages`,
+  `checkPinDrift` and `restoreAssets`.
+
 ## [0.6.0] - 2026-10-04
 
 ### Changed
