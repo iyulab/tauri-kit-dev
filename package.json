@@ -1,6 +1,6 @@
 {
   "name": "@iyulab/tauri-kit-dev",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "Development and verification tools for Tauri desktop apps: drive the WebView2 window over CDP, check installers, and keep public text clean. Nothing here ships inside an app.",
   "type": "module",
   "license": "MIT",

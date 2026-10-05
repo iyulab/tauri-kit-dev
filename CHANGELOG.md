@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-10-05
+
 ### Fixed
 
 - `App.quit` (with `webviewProfile`) failed with "did not exit" on a machine whose cores were all busy:
