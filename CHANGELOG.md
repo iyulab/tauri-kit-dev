@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-10-05
+
 ### Fixed
 
 - `notices` left out the .NET runtime packs of a helper published with `-r <rid> --self-contained` on
