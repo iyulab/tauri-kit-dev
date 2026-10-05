@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `App.quit` (with `webviewProfile`) failed with "did not exit" on a machine whose cores were all busy:
+  WebView2 processes ended by force were given 5 s to go, and their teardown took ≈14 s there.
+  `webviewGone` now gives them 30 s — `killMs` to change it.
+
 ### Changed
 
 - `notices` and `nugetPackages` fail when the NuGet properties say self-contained (`SelfContained` or

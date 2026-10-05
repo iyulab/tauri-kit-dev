@@ -171,10 +171,12 @@ export class App {
 
 /**
  * Waits until no WebView2 process runs whose command line holds `profile`. A killed app's browser notices
- * only after a while; past `graceMs` the leftovers, which belong to that profile alone, are ended too.
+ * only after a while; past `graceMs` the leftovers, which belong to that profile alone, are ended too, and
+ * given `killMs` to go. A process ended by force does go, but on a machine whose cores are all busy its
+ * teardown takes its turn: ≈14 s was seen with every core saturated, against well under a second idle.
  * WebView2 is Windows' web view, so elsewhere there is nothing to wait for.
  */
-export async function webviewGone(profile, { graceMs = 10_000, platform = process.platform } = {}) {
+export async function webviewGone(profile, { graceMs = 10_000, killMs = 30_000, platform = process.platform } = {}) {
   if (platform !== 'win32') return
   const { execFileSync } = await import('node:child_process')
   // An identifier: letters, digits, dots and dashes — nothing a PowerShell wildcard or quote would read.
@@ -194,7 +196,7 @@ export async function webviewGone(profile, { graceMs = 10_000, platform = proces
   }
   if (await settle(graceMs)) return
   execFileSync('powershell', ['-NoProfile', '-Command', `${on} | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`])
-  if (!(await settle(5_000))) throw new Error(`WebView2 on the profile ${profile} did not exit`)
+  if (!(await settle(killMs))) throw new Error(`WebView2 on the profile ${profile} did not exit within ${killMs / 1000} s of being ended`)
 }
 
 /**
