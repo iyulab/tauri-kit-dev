@@ -5,8 +5,9 @@
 ### Fixed
 
 - `App.quit` (with `webviewProfile`) failed with "did not exit" on a machine whose cores were all busy:
-  WebView2 processes ended by force were given 5 s to go, and their teardown took ≈14 s there.
-  `webviewGone` now gives them 30 s — `killMs` to change it.
+  WebView2 processes ended by force were given 5 s to go, and their teardown took 13–17 s there.
+  `webviewGone` now gives them 60 s (`killMs` to change it), and watches them from one PowerShell per
+  wait rather than starting one every quarter second, which added load to the machine it waited on.
 
 ### Changed
 

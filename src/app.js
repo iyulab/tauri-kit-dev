@@ -173,30 +173,31 @@ export class App {
  * Waits until no WebView2 process runs whose command line holds `profile`. A killed app's browser notices
  * only after a while; past `graceMs` the leftovers, which belong to that profile alone, are ended too, and
  * given `killMs` to go. A process ended by force does go, but on a machine whose cores are all busy its
- * teardown takes its turn: ≈14 s was seen with every core saturated, against well under a second idle.
+ * teardown takes its turn — 13–17 s was seen with every core saturated, against well under a second idle.
  * WebView2 is Windows' web view, so elsewhere there is nothing to wait for.
  */
-export async function webviewGone(profile, { graceMs = 10_000, killMs = 30_000, platform = process.platform } = {}) {
+export async function webviewGone(profile, { graceMs = 10_000, killMs = 60_000, platform = process.platform } = {}) {
   if (platform !== 'win32') return
-  const { execFileSync } = await import('node:child_process')
+  const { execFile } = await import('node:child_process')
+  const { promisify } = await import('node:util')
   // An identifier: letters, digits, dots and dashes — nothing a PowerShell wildcard or quote would read.
   if (!/^[\w.-]+$/.test(profile)) throw new Error(`webviewProfile takes an app identifier, not "${profile}"`)
-  const like = profile
   // The process table can still list a process that has exited while something holds a handle to it;
   // only ones Get-Process can open are running.
-  const on = `Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" | Where-Object { $_.CommandLine -like '*${like}*' -and (Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue) }`
-  const left = () => Number(execFileSync('powershell', ['-NoProfile', '-Command', `@(${on}).Count`], { encoding: 'utf8' }).trim())
-  const settle = async (ms) => {
-    const until = Date.now() + ms
-    while (Date.now() < until) {
-      if (left() === 0) return true
-      await new Promise((r) => setTimeout(r, 250))
-    }
-    return false
+  const running = `Get-Process -Id $_ -ErrorAction SilentlyContinue`
+  // One PowerShell per wait, polling inside itself: starting PowerShell is the costly part, and on a
+  // saturated machine a start every poll competes with the very teardown being waited for.
+  const wait = async (ms, { end }) => {
+    const script = `$ids = @(Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" | Where-Object { $_.CommandLine -like '*${profile}*' } | ForEach-Object ProcessId)
+${end ? `$ids | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }` : ''}
+$until = (Get-Date).AddMilliseconds(${ms})
+do { $ids = @($ids | Where-Object { ${running} }); if (-not $ids.Count) { break }; Start-Sleep -Milliseconds 250 } while ((Get-Date) -lt $until)
+$ids.Count`
+    const { stdout } = await promisify(execFile)('powershell', ['-NoProfile', '-Command', script], { encoding: 'utf8' })
+    return Number(stdout.trim()) === 0
   }
-  if (await settle(graceMs)) return
-  execFileSync('powershell', ['-NoProfile', '-Command', `${on} | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`])
-  if (!(await settle(killMs))) throw new Error(`WebView2 on the profile ${profile} did not exit within ${killMs / 1000} s of being ended`)
+  if (await wait(graceMs, { end: false })) return
+  if (!(await wait(killMs, { end: true }))) throw new Error(`WebView2 on the profile ${profile} did not exit within ${killMs / 1000} s of being ended`)
 }
 
 /**
