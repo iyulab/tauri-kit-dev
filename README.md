@@ -154,7 +154,9 @@ export default {
 The .NET project is restored with `nuget.properties` as MSBuild properties — the ones the helper is
 published with. A helper published with `-r <rid> --self-contained` on the command line ships the
 runtime packs of its frameworks, and only a restore for that runtime identifier, self-contained,
-downloads them: without the properties they are missing from the notices.
+downloads them: without the properties they are missing from the notices. Properties that say
+self-contained (`SelfContained` or `PublishAot`) with a restore that downloaded no runtime pack fail,
+rather than leave the runtime out without a word.
 
 A pin that applies to no shipped package, or a pinned text that is missing or not the one pinned,
 fails. `--strict` also fails on a package left without a license text — for a release that goes

@@ -289,6 +289,8 @@ const hasFiles = (assets) => !!assets && Object.keys(assets).some((f) => !f.ends
  *   without them the restore downloads no runtime pack and those are left out; `restore` restores
  *   the project and returns its `project.assets.json`; without it, dotnet is run (`restoreAssets`).
  * @returns {Package[]}
+ * @throws when the properties say self-contained (`SelfContained` or `PublishAot`) and the restore
+ *   downloaded no runtime pack: the helper ships a runtime the notices would silently leave out.
  */
 export function nugetPackages({ project, properties = {}, restore = restoreAssets }) {
   const assets = restore(project, properties)
@@ -304,13 +306,23 @@ export function nugetPackages({ project, properties = {}, restore = restoreAsset
       packages.push(nugetPackage(folder, name, version))
     }
   }
+  let runtimePacks = 0
   for (const framework of Object.values(parsed.project?.frameworks ?? {})) {
     const runtimes = Object.keys(framework.frameworkReferences ?? {}).map((f) => `${f.toLowerCase()}.runtime.`)
     for (const { name, version } of framework.downloadDependencies ?? []) {
       if (!runtimes.some((prefix) => name.toLowerCase().startsWith(prefix))) continue
       // A download dependency's version is an exact range: `[10.0.5, 10.0.5]`.
       packages.push(nugetPackage(folder, name, version.replace(/^\[\s*([^,\]\s]+).*$/, '$1')))
+      runtimePacks++
     }
+  }
+  const says = (name) => String(properties[name] ?? '').toLowerCase() === 'true'
+  if ((says('SelfContained') || says('PublishAot')) && runtimePacks === 0) {
+    const given = Object.entries(properties).map(([name, value]) => `${name}=${value}`).join(';')
+    throw new Error(
+      `restoring ${project} with ${given} downloaded no runtime pack, though a self-contained helper ships the runtime — ` +
+        'is the runtime identifier among the properties?',
+    )
   }
   const unique = new Map(packages.map((p) => [`${p.name}@${p.version}`, p]))
   return [...unique.values()].sort(byNameThenVersion)

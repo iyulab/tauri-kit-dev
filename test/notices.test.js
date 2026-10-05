@@ -232,7 +232,16 @@ test('the nuget source reads the graph the restore of its project just wrote', (
 
 test('the nuget source restores with the properties the helper is published with', () => {
   const dir = scratch()
-  writeFileSync(join(dir, 'project.assets.json'), JSON.stringify({ packageFolders: { [dir + '/']: {} }, targets: { 'net10.0': {} } }))
+  const frameworks = {
+    'net10.0': {
+      frameworkReferences: { 'Microsoft.NETCore.App': {} },
+      downloadDependencies: [{ name: 'Microsoft.NETCore.App.Runtime.win-x64', version: '[10.0.5, 10.0.5]' }],
+    },
+  }
+  writeFileSync(
+    join(dir, 'project.assets.json'),
+    JSON.stringify({ packageFolders: { [dir + '/']: {} }, targets: { 'net10.0': {} }, project: { frameworks } }),
+  )
   const restored = []
   const restore = (project, properties) => (restored.push([project, properties]), join(dir, 'project.assets.json'))
   const properties = { RuntimeIdentifier: 'win-x64', SelfContained: true }
@@ -281,6 +290,17 @@ test('a self-contained helper carries the runtime packs of the frameworks it ref
     { name: 'Microsoft.AspNetCore.App.Runtime.win-x64', version: '10.0.5', license: 'MIT', url: 'https://www.nuget.org/packages/Microsoft.AspNetCore.App.Runtime.win-x64', texts: ['web license'], bundledNotices: ['web notices'] },
     { name: 'Microsoft.NETCore.App.Runtime.NativeAOT.win-x64', version: '10.0.5', license: 'MIT', url: 'https://www.nuget.org/packages/Microsoft.NETCore.App.Runtime.NativeAOT.win-x64', texts: ['runtime license'], bundledNotices: ['runtime notices'] },
   ])
+})
+
+test('a self-contained restore that downloaded no runtime pack is an error, not notices without the runtime', () => {
+  const dir = scratch()
+  writeFileSync(join(dir, 'project.assets.json'), JSON.stringify({ packageFolders: { [dir + '/']: {} }, targets: { 'net10.0': {} } }))
+  const restore = () => join(dir, 'project.assets.json')
+  for (const properties of [{ SelfContained: true }, { RuntimeIdentifier: 'win-x64', SelfContained: 'true' }, { PublishAot: true }])
+    assert.throws(() => nugetPackages({ project: 'Helper.csproj', properties, restore }), /Helper\.csproj .* downloaded no runtime pack/)
+  // A framework-dependent helper ships no runtime: none is expected.
+  assert.deepEqual(nugetPackages({ project: 'Helper.csproj', restore }), [])
+  assert.deepEqual(nugetPackages({ project: 'Helper.csproj', properties: { SelfContained: false }, restore }), [])
 })
 
 test('a table has one row per package', () => {

@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Changed
+
+- `notices` and `nugetPackages` fail when the NuGet properties say self-contained (`SelfContained` or
+  `PublishAot`) and the restore downloaded no runtime pack — the helper ships a runtime, and notices
+  without it were left to pass silently (as when a restore was run without the runtime identifier).
+
 ## [0.6.1] - 2026-10-05
 
 ### Fixed
