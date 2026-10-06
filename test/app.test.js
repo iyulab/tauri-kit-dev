@@ -45,6 +45,63 @@ test('the in-page helpers are a script that defines them under the given name', 
   assert.equal(typeof window.__t.target, 'function')
 })
 
+/** The helpers in a window that only records its capture listeners, and a press that walks `path`. */
+function pressing() {
+  const listeners = []
+  const window = { addEventListener: (type, fn, capture) => listeners.push({ type, fn, capture }) }
+  new Function('window', 'document', helpers('__t'))(window, {})
+  const press = (path) =>
+    ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].map((type) => {
+      const e = { type, composedPath: () => path, stopped: false, prevented: false }
+      e.stopImmediatePropagation = () => (e.stopped = true)
+      e.preventDefault = () => (e.prevented = true)
+      for (const l of listeners) if (l.type === type) l.fn(e)
+      return e
+    })
+  return { h: window.__t, listeners, press }
+}
+
+test('a press that lands on the armed element goes through, and disarm says it landed', () => {
+  const { h, listeners, press } = pressing()
+  const button = { disabled: false, hasAttribute: () => false }
+  h.arm(button)
+  assert.ok(listeners.every((l) => l.capture), 'the listeners see the press before the page does')
+  const events = press([{}, button, {}])
+  assert.ok(events.every((e) => !e.stopped && !e.prevented))
+  assert.equal(h.disarm(), true)
+})
+
+test('a press that hits something else, or the element turned off, is kept from the page and counts as missed', () => {
+  const { h, press } = pressing()
+  const button = { disabled: false, hasAttribute: () => false }
+  h.arm(button)
+  assert.ok(press([{ other: true }]).every((e) => e.stopped && e.prevented), 'what it hit instead never hears it')
+  assert.equal(h.disarm(), false)
+
+  h.arm(button)
+  button.disabled = true
+  assert.ok(press([button]).every((e) => e.stopped))
+  assert.equal(h.disarm(), false)
+
+  h.arm(button)
+  assert.equal(h.disarm(), false, 'a press that never arrived did not land')
+  const after = press([{ other: true }])
+  assert.ok(after.every((e) => !e.stopped), 'disarmed, the listeners let every press by')
+})
+
+test('click tries again when the press missed, and says so when it keeps missing', async () => {
+  const clicks = []
+  let landed = [false, true]
+  const app = new App()
+  app.cdp = { waitFor: async () => ({ x: 1, y: 2 }), clickAt: async (b) => clicks.push(b), evaluate: async () => landed.shift() }
+  await app.click('dc-button', '산출')
+  assert.equal(clicks.length, 2)
+
+  landed = [false, false, false]
+  await assert.rejects(app.click('dc-button', '산출', { attempts: 3 }), /missed it 3 times/)
+  assert.equal(clicks.length, 5)
+})
+
 test('a launch refuses a port that already answers — an earlier window would answer in its place', async (t) => {
   const server = createServer((_, res) => res.end('{}'))
   await new Promise((r) => server.listen(0, '127.0.0.1', r))

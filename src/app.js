@@ -51,6 +51,36 @@ export function helpers(name = '__e2e') {
     for (let n = hit; n; n = n.parentNode ?? n.host) if (n === el) return b
     return false
   },
+  /**
+   * Watches the next press for whether it lands on el, still enabled. The page can move or turn off
+   * el in the moment between measuring its box and the press arriving; a press that misses is kept
+   * from whatever it hit instead, and disarm() says so, so the click can be tried again.
+   */
+  arm(el) {
+    if (!this.listening) {
+      this.listening = true
+      const watch = (e) => {
+        const armed = this.armed
+        if (!armed) return
+        if (armed.landed === undefined && e.type === 'pointerdown') {
+          const off = (node) => node.disabled || node.hasAttribute?.('disabled')
+          armed.landed = e.composedPath().includes(armed.el) && !off(armed.el)
+        }
+        if (armed.landed === false) {
+          e.preventDefault()
+          e.stopImmediatePropagation()
+        }
+      }
+      for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) window.addEventListener(type, watch, true)
+    }
+    this.armed = { el, landed: undefined }
+  },
+  /** Whether the press since arm() landed on its element; a press that never arrived did not. */
+  disarm() {
+    const landed = this.armed?.landed === true
+    this.armed = undefined
+    return landed
+  },
 }; true`
 }
 
@@ -141,16 +171,28 @@ export class App {
   }
 
   get #h() {
-    return this.#options.helpersName ?? '__e2e'
+    return this.#options?.helpersName ?? '__e2e'
   }
 
-  /** Clicks, with the mouse, the element matching `selector` (and whose label is `text`, if given). */
-  async click(selector, text) {
-    const box = await this.cdp.waitFor(
-      `(() => { const el = ${this.#h}.one(${q(selector)}, ${q(text)}); return el && !el.disabled && !el.hasAttribute('disabled') && ${this.#h}.target(el) })()`,
-      `${selector}${text ? ` "${text}"` : ''} to be clickable`,
-    )
-    await this.cdp.clickAt(box)
+  /**
+   * Clicks, with the mouse, the element matching `selector` (and whose label is `text`, if given). A press
+   * the page moved out from under — or that found the element turned off — is kept from what it hit and
+   * tried again, up to `attempts` times.
+   */
+  async click(selector, text, { attempts = 5 } = {}) {
+    const what = `${selector}${text ? ` "${text}"` : ''}`
+    for (let attempt = 1; ; attempt++) {
+      const box = await this.cdp.waitFor(
+        `(() => { const h = ${this.#h}, el = h.one(${q(selector)}, ${q(text)}); const b = el && !el.disabled && !el.hasAttribute('disabled') && h.target(el); if (b) h.arm(el); return b })()`,
+        `${what} to be clickable`,
+      )
+      await this.cdp.clickAt(box)
+      // Without the helpers the press took the page somewhere else: it landed.
+      if (await this.cdp.evaluate(`window[${q(this.#h)}]?.disarm() ?? true`)) return
+      if (attempt === attempts) throw new Error(`a click on ${what} missed it ${attempts} times — the window kept moving it or turning it off`)
+      // Said, not hidden: a window that moves what a person is about to click is worth a look.
+      console.warn(`    (a click on ${what} missed it — trying again)`)
+    }
   }
 
   /**

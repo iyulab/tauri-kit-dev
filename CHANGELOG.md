@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `App.click` could lose a click without a word: the page could move the element, or turn it off, in
+  the moment between the check that it is clickable and the press arriving, and the press then went to
+  whatever was there (or to nothing). The helpers now watch the press itself: one that does not land on
+  the element, still enabled, is kept from what it hit and the click is tried again — up to `attempts`
+  times (default 5, `click(selector, text, { attempts })`) with a line on the console each time, then it
+  fails saying so. New in-page helpers `arm(el)` and `disarm()`.
+
 ## [0.6.2] - 2026-10-05
 
 ### Fixed
