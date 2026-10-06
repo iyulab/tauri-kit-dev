@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-10-06
+
 ### Fixed
 
 - `App.click` could lose a click without a word: the page could move the element, or turn it off, in
