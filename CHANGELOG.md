@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.6.4] - 2026-10-08
+
 ### Added
 
 - `withAppDataSetAside(appData, body)` (`installer`): runs a check with the app's data folder moved
