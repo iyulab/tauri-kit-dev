@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- `withAppDataSetAside(appData, body)` (`installer`): runs a check with the app's data folder moved
+  aside and puts it back afterwards, passed or not, removing what the check's app wrote. An installed
+  copy started by a check writes where the person's own copy does, and one ended by force leaves an
+  unfinished session there for the next real launch to find or send. It refuses to run while a folder
+  set aside by an earlier, interrupted check is still there.
+
 ## [0.6.3] - 2026-10-06
 
 ### Fixed

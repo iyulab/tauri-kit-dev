@@ -9,7 +9,7 @@
 
 import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, readdirSync } from 'node:fs'
-import { mkdir, mkdtemp, readdir, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -161,6 +161,40 @@ export function publishedReleases(repo) {
  */
 export function profileSnapshots(appData) {
   return join(appData, 'EBWebView', 'Snapshots')
+}
+
+/**
+ * Runs `body` with the app's data folder set aside, then puts it back — whether `body` passed or not.
+ * An installed app started by a check writes where the person's own copy does (its identity, its
+ * session and diagnostic records, the web view profile), and a check that ends it by force leaves an
+ * unfinished session there for the next real launch to find, or to send. `body` starts from no data
+ * folder; what the check's app wrote is removed afterwards.
+ *
+ * The folder is moved aside to `<appData>.set-aside`. If that is already there, an earlier check
+ * ended without putting it back: this refuses to run rather than lose it — move it back by hand.
+ *
+ * @template T
+ * @param {string} appData  the app's data folder, e.g. `%LOCALAPPDATA%\<identifier>`
+ * @param {() => Promise<T>} body
+ * @param {{ retries?: number }} [options]  retries: tries at removing the check's folder while web view processes let go of it
+ */
+export async function withAppDataSetAside(appData, body, { retries = 40 } = {}) {
+  const aside = `${appData}.set-aside`
+  if (existsSync(aside)) throw new Error(`${aside} is left from an earlier check; move it back to ${appData} first`)
+  const had = existsSync(appData)
+  if (had) {
+    try {
+      await rename(appData, aside)
+    } catch (e) {
+      throw new Error(`could not set ${appData} aside (is the app running?): ${e.message}`)
+    }
+  }
+  try {
+    return await body()
+  } finally {
+    await rm(appData, { recursive: true, force: true, maxRetries: retries, retryDelay: 250 })
+    if (had) await rename(aside, appData)
+  }
 }
 
 /** Leaves a profile copy the way a runtime update would, so a check can see the app remove it. */

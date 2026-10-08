@@ -1,7 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { nsisArgs, pickInstaller, pickReleaseInstaller, pickUpgradeFrom, profileSnapshots } from '../src/installer.js'
+import { nsisArgs, pickInstaller, pickReleaseInstaller, pickUpgradeFrom, profileSnapshots, withAppDataSetAside } from '../src/installer.js'
 
 test('NSIS: silent, and the folder last and unquoted', () => {
   assert.deepEqual(nsisArgs('C:\\Temp\\my app'), ['/S', '/D=C:\\Temp\\my app'])
@@ -43,4 +46,45 @@ test('a release with one installer is picked whatever it is named', () => {
 test('no installer, or several of the same version, is not a pick', () => {
   assert.equal(pickReleaseInstaller(['latest.json'], { tag: 'v0.1.7' }), null)
   assert.equal(pickReleaseInstaller(['A_0.1.7_x64-setup.exe', 'B_0.1.7_x64-setup.exe'], { tag: 'v0.1.7' }), null)
+})
+
+test('a data folder set aside comes back as it was, and what the check wrote is gone', async () => {
+  const base = await mkdtemp(join(tmpdir(), 'kit-appdata-'))
+  const appData = join(base, 'com.example.app')
+  await mkdir(appData)
+  await writeFile(join(appData, 'install-id'), 'mine')
+  const seen = await withAppDataSetAside(appData, async () => {
+    const before = existsSync(appData)
+    await mkdir(join(appData, 'diagnostics'), { recursive: true })
+    await writeFile(join(appData, 'diagnostics', 'sessions.jsonl'), 'a check session')
+    return before
+  })
+  assert.equal(seen, false, 'the check starts from no data folder')
+  assert.deepEqual(readdirSync(appData), ['install-id'])
+  assert.equal(readFileSync(join(appData, 'install-id'), 'utf8'), 'mine')
+  await rm(base, { recursive: true, force: true })
+})
+
+test('a data folder that was not there is not there afterwards, even when the check fails', async () => {
+  const base = await mkdtemp(join(tmpdir(), 'kit-appdata-'))
+  const appData = join(base, 'com.example.app')
+  await assert.rejects(
+    withAppDataSetAside(appData, async () => {
+      await mkdir(appData)
+      throw new Error('the check failed')
+    }),
+    /the check failed/,
+  )
+  assert.equal(existsSync(appData), false)
+  await rm(base, { recursive: true, force: true })
+})
+
+test('a folder left aside by an earlier check is not overwritten', async () => {
+  const base = await mkdtemp(join(tmpdir(), 'kit-appdata-'))
+  const appData = join(base, 'com.example.app')
+  await mkdir(`${appData}.set-aside`)
+  let ran = false
+  await assert.rejects(withAppDataSetAside(appData, async () => (ran = true)), /left from an earlier check/)
+  assert.equal(ran, false)
+  await rm(base, { recursive: true, force: true })
 })

@@ -103,6 +103,19 @@ Installing over the latest published version (`pickUpgradeFrom`, `downloadInstal
 that WebView2 profile copies are dropped (`profileSnapshots`, `seedProfileSnapshot`) use the same
 pieces.
 
+An installed copy keeps its data where the person's own copy does (`%LOCALAPPDATA%\<identifier>`),
+and `startsAndStays` ends it by force. Wrap a check in `withAppDataSetAside` so whatever the app writes
+there — its identity, session or diagnostic records, the web view profile — does not stay behind for
+the next real launch:
+
+```js
+import { withAppDataSetAside } from '@iyulab/tauri-kit-dev/installer'
+
+await withAppDataSetAside(join(process.env.LOCALAPPDATA, 'com.example.my-app'), async () => {
+  // the folder is moved aside first, so the check starts with none; put back afterwards
+})
+```
+
 On a computer without internet, in Windows Sandbox:
 
 ```sh
