@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-10
+
 ### Fixed
 
 - `App.launch` said only "no page on debugging port … (fetch failed)" when a window never opened its
