@@ -48,15 +48,17 @@ line. The window has to carry the port in its own browser arguments, in one of t
   ```rust
   for declared in &app.config().app.windows {
       let mut window = declared.clone();
-      // Debug builds only: an installed app must not open a debugging port because of a variable.
-      if cfg!(debug_assertions) {
-          if let Ok(extra) = std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS") {
-              window.additional_browser_args = Some(format!("{DEFAULT_ARGUMENTS} {extra}"));
-          }
+      // `None` in a release build: an installed app never opens a debugging port because of a variable.
+      if let Some(arguments) = tauri_kit_webview::forwarded_browser_arguments(DEFAULT_ARGUMENTS) {
+          window.additional_browser_args = Some(arguments);
       }
       tauri::WebviewWindowBuilder::from_config(app.handle(), &window)?.build()?;
   }
   ```
+
+  (`forwarded_browser_arguments` is in [tauri-kit](https://github.com/iyulab/tauri-kit)'s
+  `tauri-kit-webview` from 0.15; before that, read the variable in a debug build and append it the
+  same way.)
 
   Giving a window browser arguments replaces the ones the web view library passes by default, so
   `DEFAULT_ARGUMENTS` repeats them: `--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection`,
