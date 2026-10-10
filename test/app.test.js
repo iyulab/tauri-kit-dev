@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
-import { App, webviewGone, debugEnv, helpers, pictureName, runScenarios, selectScenarios } from '../src/app.js'
+import { App, webviewGone, debugEnv, debugPortDiagnosis, helpers, pictureName, runScenarios, selectScenarios } from '../src/app.js'
 
 const names = ['open a folder', 'add a record', 'search', 'close']
 
@@ -165,4 +165,22 @@ test("an app's own subclass launches as itself, so its own methods are there aft
 test('waiting for a web view profile takes an app identifier, and has nothing to wait for off Windows', async () => {
   await assert.rejects(webviewGone("x' ; Stop-Computer", { platform: 'win32' }), /takes an app identifier/)
   await webviewGone('com.example.app', { platform: 'linux' })
+})
+
+test('a window whose port never opened is told apart by its browser command line', () => {
+  const browser = (args) => `"msedgewebview2.exe" --embedded-browser-webview=1 --webview-exe-name=my-app.exe ${args} --lang=en-US`
+  const renderer = '"msedgewebview2.exe" --type=renderer --webview-exe-name=my-app.exe --remote-debugging-port=9233'
+  const other = '"msedgewebview2.exe" --webview-exe-name=other-app.exe --remote-debugging-port=9233'
+
+  // No browser for this app — not even one from another app on the same port counts.
+  assert.match(debugPortDiagnosis(9233, 'my-app.exe', [other]), /no WebView2 browser was started for my-app\.exe/)
+  // A browser without the port: the variable never reached it — say so, and where the remedy is.
+  const said = debugPortDiagnosis(9233, 'my-app.exe', [browser('--disable-features=X'), renderer])
+  assert.match(said, /started without --remote-debugging-port=9233/)
+  assert.match(said, /WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS/)
+  assert.match(said, /Opening the debugging port/)
+  // Another port is not this port.
+  assert.match(debugPortDiagnosis(9233, 'my-app.exe', [browser('--remote-debugging-port=92330')]), /started without/)
+  // The browser carried the port: the cause lies elsewhere, nothing to add.
+  assert.equal(debugPortDiagnosis(9233, 'my-app.exe', [browser('--remote-debugging-port=9233')]), undefined)
 })

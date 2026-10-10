@@ -6,7 +6,7 @@
 import { spawn } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { Cdp, findPage, portAnswers } from './cdp.js'
 
 /**
@@ -90,13 +90,47 @@ const q = (s) => JSON.stringify(s)
 export const WEBVIEW2_ARGUMENTS = 'WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS'
 
 /**
- * The environment that opens WebView2's debugging port. An app that passes WebView2 its own
- * browser arguments replaces this variable; such an app opens the port in its test configuration
- * instead, and `launch` is given `debugPortFromEnv: false`.
+ * The environment that carries WebView2's debugging port to the app. Current WebView2 runtimes do not
+ * apply this variable to an app that passes browser arguments of its own — and a Tauri app always
+ * does (its web view library passes defaults) — so the app's debug build reads the variable and puts
+ * it into its window's own browser arguments (README, "Opening the debugging port"). An app that opens
+ * the port some other way is launched with `debugPortFromEnv: false`.
  */
 export function debugEnv(port, env = process.env) {
   const given = env[WEBVIEW2_ARGUMENTS]
   return { [WEBVIEW2_ARGUMENTS]: [given, `--remote-debugging-port=${port}`].filter(Boolean).join(' ') }
+}
+
+/**
+ * Why a window never opened its debugging port, read from the command lines of the WebView2 processes
+ * on the computer: whether a browser was started for the app (`--webview-exe-name=<exeName>`), and
+ * whether it was given the port. Answers a sentence, or undefined when the browser did carry the port
+ * — then the cause lies elsewhere and there is nothing more to say.
+ *
+ * @param {number} port
+ * @param {string} exeName       the file name of the app's executable
+ * @param {string[]} commandLines of the `msedgewebview2.exe` processes
+ */
+export function debugPortDiagnosis(port, exeName, commandLines) {
+  const browsers = commandLines.filter((line) => line.includes(`--webview-exe-name=${exeName}`) && !line.includes('--type='))
+  if (browsers.length === 0) return `no WebView2 browser was started for ${exeName} — the window never opened its web view`
+  if (browsers.some((line) => line.includes(`--remote-debugging-port=${port} `) || line.endsWith(`--remote-debugging-port=${port}`))) return undefined
+  return (
+    `the WebView2 browser for ${exeName} started without --remote-debugging-port=${port}: the runtime did not apply ` +
+    `${WEBVIEW2_ARGUMENTS}, which current runtimes leave out when the app passes browser arguments of its own (a Tauri ` +
+    `app always does). The debug build has to put the port into its window's browser arguments — see "Opening the ` +
+    `debugging port" in the README`
+  )
+}
+
+/** The command lines of the WebView2 processes running now — Windows only; elsewhere there are none to read. */
+async function webviewCommandLines(platform = process.platform) {
+  if (platform !== 'win32') return undefined
+  const { execFile } = await import('node:child_process')
+  const { promisify } = await import('node:util')
+  const script = `Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" | ForEach-Object CommandLine`
+  const { stdout } = await promisify(execFile)('powershell', ['-NoProfile', '-Command', script], { encoding: 'utf8' })
+  return stdout.split(/\r?\n/).filter(Boolean)
 }
 
 export class App {
@@ -139,8 +173,12 @@ export class App {
       await Promise.race([app.cdp.waitFor(ready, 'the window to be ready', { timeoutMs }), exited])
       await app.cdp.evaluate(helpers(helpersName))
     } catch (e) {
+      // Asked while the app still runs: its browser's command line says whether the port ever reached it.
+      const why = String(e?.message).startsWith('no page on debugging port')
+        ? await webviewCommandLines().then((lines) => lines && debugPortDiagnosis(port, basename(exe), lines)).catch(() => undefined)
+        : undefined
       await app.quit()
-      throw e
+      throw why ? new Error(`${e.message} — ${why}`, { cause: e }) : e
     }
     return app
   }

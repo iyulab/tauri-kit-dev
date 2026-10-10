@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `App.launch` said only "no page on debugging port … (fetch failed)" when a window never opened its
+  debugging port, a minute after the window had appeared. It now reads the command lines of the
+  WebView2 browsers on the computer and says which it was: no browser was started for the app, or one
+  was started without `--remote-debugging-port` — the runtime did not apply
+  `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` — with where the remedy is. New `debugPortDiagnosis(port,
+  exeName, commandLines)` (`app`) makes that call from the command lines alone.
+- The README and `debugEnv` said the environment variable opens the port. Current WebView2 runtimes
+  do not apply it to an app that passes browser arguments of its own, which a Tauri app always does.
+  The README now has *Opening the debugging port*: forwarding the variable from the debug build into
+  the window's browser arguments, or a test configuration with a fixed port — and the web view
+  library's default arguments both must repeat.
+
 ## [0.6.4] - 2026-10-08
 
 ### Added

@@ -14,9 +14,9 @@ in [docs/SCOPE.md](docs/SCOPE.md).
 
 ## Driving the window over CDP
 
-WebView2 opens a Chrome DevTools Protocol port when the app starts with
-`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=<port>` (or the equivalent in the
-app's own window configuration for a test build).
+WebView2 opens a Chrome DevTools Protocol port when its browser starts with
+`--remote-debugging-port=<port>`. How a Tauri app's window gets that argument is under *Opening the
+debugging port* below — the environment variable alone is not enough.
 
 ```js
 import { writeFile } from 'node:fs/promises'
@@ -33,6 +33,37 @@ cdp.close()
 
 `portAnswers(port)` tells whether something is already listening — a window left over from an
 earlier run would otherwise answer in place of the one just started.
+
+### Opening the debugging port
+
+`App.launch` passes the port in `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` (`debugEnv`). Current WebView2
+runtimes do not apply that variable to an app that passes browser arguments of its own, and a Tauri
+app always does: its web view library passes defaults. The variable reaches the app's process but not
+its browser, the port never opens, and the launch fails — saying so, read from the browser's command
+line. The window has to carry the port in its own browser arguments, in one of two ways:
+
+- **The debug build forwards the variable** — the port is still chosen per launch. Declare the window
+  with `"create": false`, and open it in `setup` with the variable's arguments added to its own:
+
+  ```rust
+  for declared in &app.config().app.windows {
+      let mut window = declared.clone();
+      // Debug builds only: an installed app must not open a debugging port because of a variable.
+      if cfg!(debug_assertions) {
+          if let Ok(extra) = std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS") {
+              window.additional_browser_args = Some(format!("{DEFAULT_ARGUMENTS} {extra}"));
+          }
+      }
+      tauri::WebviewWindowBuilder::from_config(app.handle(), &window)?.build()?;
+  }
+  ```
+
+  Giving a window browser arguments replaces the ones the web view library passes by default, so
+  `DEFAULT_ARGUMENTS` repeats them: `--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection`,
+  and `--autoplay-policy=no-user-gesture-required` while autoplay is on.
+- **A test configuration carries a fixed port** — `tauri dev --config <file>` (or a build with that
+  configuration) whose windows have `"additionalBrowserArgs"` with `--remote-debugging-port=<port>`
+  and the same defaults. Launch with that port and `debugPortFromEnv: false`.
 
 ## Running scenarios against the app
 
