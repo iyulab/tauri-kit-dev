@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-13
+
 ### Added
 
 - `Cdp.send(method, params, { timeoutMs })` and `Cdp.evaluate(expression, { timeoutMs })`: a command the window
