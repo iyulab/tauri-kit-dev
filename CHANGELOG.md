@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### Added
+
+- `Cdp.send(method, params, { timeoutMs })` and `Cdp.evaluate(expression, { timeoutMs })`: a command the window
+  has not answered within the time fails with `<method>: no answer within <n> s` instead of waiting on. Without
+  `timeoutMs` a command waits as before.
+
+### Fixed
+
+- `Cdp.waitFor` kept waiting past its deadline when one evaluation never answered — a page whose script hangs
+  keeps the command pending while the debugging connection stays open. Each evaluation is now bounded by the time
+  left, so `waitFor` fails at its deadline with `timed out waiting for …`.
+- A run that ended without `App.quit` — an error thrown past its `finally`, `process.exit`, or Ctrl+C on a run
+  that hung — left the app's window running, and the next launch met it. `App.launch` now ends the app when the
+  process exits or is interrupted, until `quit` ends it first; on Ctrl+C with no other `SIGINT` handler the
+  process then exits with 130, as it would have.
+- `Cdp.close` fails the commands still waiting for an answer at once, rather than when the window lets the
+  connection go — which a hung window may never do.
+
 ## [0.7.0] - 2026-10-10
 
 ### Fixed

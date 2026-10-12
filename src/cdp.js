@@ -67,34 +67,49 @@ export class Cdp {
     return cdp
   }
 
-  /** Sends one protocol command and resolves with its result. */
-  send(method, params = {}) {
+  /**
+   * Sends one protocol command and resolves with its result. With `timeoutMs`, a command the window
+   * has not answered by then fails instead of waiting on: a page that hangs keeps a command pending
+   * while the connection stays open.
+   */
+  send(method, params = {}, { timeoutMs } = {}) {
     if (this.#closed) return Promise.reject(new Error(`${method}: the window's debugging connection is closed`))
     const id = this.#nextId++
     this.#ws.send(JSON.stringify({ id, method, params }))
-    return new Promise((resolve, reject) => this.#pending.set(id, { resolve, reject, method }))
+    return new Promise((resolve, reject) => {
+      if (timeoutMs === undefined) return this.#pending.set(id, { resolve, reject, method })
+      const timer = setTimeout(() => {
+        this.#pending.delete(id)
+        reject(new Error(`${method}: no answer within ${timeoutMs / 1000} s`))
+      }, timeoutMs)
+      const settle = (fn) => (value) => (clearTimeout(timer), fn(value))
+      this.#pending.set(id, { resolve: settle(resolve), reject: settle(reject), method })
+    })
   }
 
-  /** Evaluates `expression` in the page and returns its (awaited) value. */
-  async evaluate(expression) {
-    const { result, exceptionDetails } = await this.send('Runtime.evaluate', {
-      expression,
-      awaitPromise: true,
-      returnByValue: true,
-    })
+  /** Evaluates `expression` in the page and returns its (awaited) value; `timeoutMs` as for `send`. */
+  async evaluate(expression, { timeoutMs } = {}) {
+    const { result, exceptionDetails } = await this.send(
+      'Runtime.evaluate',
+      { expression, awaitPromise: true, returnByValue: true },
+      { timeoutMs },
+    )
     if (exceptionDetails) {
       throw new Error(exceptionDetails.exception?.description ?? exceptionDetails.text)
     }
     return result.value
   }
 
-  /** Polls `expression` until it returns a truthy value, and returns that value. */
+  /**
+   * Polls `expression` until it returns a truthy value, and returns that value — or fails at the deadline,
+   * even when one evaluation never answers.
+   */
   async waitFor(expression, what, { timeoutMs = 10_000 } = {}) {
     const deadline = Date.now() + timeoutMs
     let lastError
     while (Date.now() < deadline) {
       try {
-        const value = await this.evaluate(expression)
+        const value = await this.evaluate(expression, { timeoutMs: Math.max(1, deadline - Date.now()) })
         if (value) return value
       } catch (e) {
         lastError = e
@@ -130,8 +145,11 @@ export class Cdp {
     return Buffer.from(data, 'base64')
   }
 
+  /** Closes the connection; what is still waiting for an answer fails now rather than when the window lets go. */
   close() {
     this.#closed = true
+    for (const { reject, method } of this.#pending.values()) reject(new Error(`${method}: the window's debugging connection closed`))
+    this.#pending.clear()
     this.#ws.close()
   }
 }

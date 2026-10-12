@@ -165,6 +165,9 @@ export class App {
     const app = new this()
     app.#options = options
     app.child = spawn(exe, args, { stdio: 'ignore', env: { ...process.env, ...(debugPortFromEnv ? debugEnv(port) : {}), ...env } })
+    // A run that ends without quitting — an error past its `finally`, `process.exit`, a hang given up on
+    // with Ctrl+C — would leave the window running, and the next launch would meet it.
+    app.#endWithProcess(app.child)
     const exited = new Promise((_, reject) => app.child.once('exit', (code) => reject(new Error(`${exe} exited with ${code} before its window was ready`))))
     exited.catch(() => {})
     try {
@@ -189,6 +192,28 @@ export class App {
     const next = await this.constructor.launch({ ...this.#options, env: { ...this.#options.env, ...env } })
     this.child = next.child
     this.cdp = next.cdp
+    this.#stopEnding = next.#stopEnding
+  }
+
+  #stopEnding
+
+  /** Ends `child` when this process exits or is interrupted, until `quit` ends it first. */
+  #endWithProcess(child) {
+    const end = () => {
+      if (child.exitCode === null && child.signalCode === null) child.kill()
+    }
+    // Ctrl+C would otherwise end this process without its `exit` handlers; with a handler of ours
+    // the default goes away, so the interrupt ends the process once the window is ended.
+    const interrupted = () => {
+      end()
+      if (process.listenerCount('SIGINT') === 0) process.exit(130)
+    }
+    process.once('exit', end)
+    process.once('SIGINT', interrupted)
+    this.#stopEnding = () => {
+      process.off('exit', end)
+      process.off('SIGINT', interrupted)
+    }
   }
 
   /**
@@ -197,6 +222,8 @@ export class App {
    */
   async quit() {
     this.cdp?.close()
+    this.#stopEnding?.()
+    this.#stopEnding = undefined
     const child = this.child
     if (!child) return
     child.kill()

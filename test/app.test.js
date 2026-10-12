@@ -184,3 +184,32 @@ test('a window whose port never opened is told apart by its browser command line
   // The browser carried the port: the cause lies elsewhere, nothing to add.
   assert.equal(debugPortDiagnosis(9233, 'my-app.exe', [browser('--remote-debugging-port=9233')]), undefined)
 })
+
+test('a run that ends without quitting takes its window with it', async (t) => {
+  const { mkdtemp, readFile, rm } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const { execFile } = await import('node:child_process')
+  const dir = await mkdtemp(join(tmpdir(), 'tkd-end-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const pidFile = join(dir, 'pid')
+  // The "window": a process that notes its id and stays. The run launches it, then exits without quitting.
+  const window = `require('fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000)`
+  const run = `import { App } from ${JSON.stringify(new URL('../src/app.js', import.meta.url).href)}
+    setTimeout(() => process.exit(3), 1500)
+    await App.launch({ exe: process.execPath, args: ['-e', ${JSON.stringify(window)}], port: 1, timeoutMs: 60_000 })`
+  const code = await new Promise((done) => execFile(process.execPath, ['--input-type=module', '-e', run]).on('exit', done))
+  assert.equal(code, 3)
+  const pid = Number(await readFile(pidFile, 'utf8'))
+  const alive = () => {
+    try {
+      process.kill(pid, 0)
+      return true
+    } catch {
+      return false
+    }
+  }
+  for (let i = 0; i < 50 && alive(); i++) await new Promise((r) => setTimeout(r, 100))
+  if (alive()) process.kill(pid)
+  assert.equal(alive(), false)
+})
