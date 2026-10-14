@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-14
+
 ### Added
 
 - `runScenarios({ scenarioTimeoutMs })`: a scenario that has not finished within the time (default 5 minutes)
