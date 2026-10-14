@@ -101,6 +101,13 @@ fails only sometimes. `E2E_SCREENSHOTS=<dir>` saves a picture after each scenari
 picture is kept either way — in that folder, or else in a new one under the temp folder (the
 `failures` option) — and the run says where.
 
+A scenario that has not finished after five minutes (the `scenarioTimeoutMs` option) fails with
+`did not finish within <n> s`, and the run goes on to quit the window: a step with no deadline of
+its own — a protocol command a window that stopped answering never answers — cannot hold the run
+until a CI job's time limit ends it with nothing said. This bounds only what yields to the event
+loop: a scenario that runs a program with a blocking call (`execFileSync`) holds the whole process,
+so run programs asynchronously with a `timeout` of their own.
+
 The window under test reads its bundled resources from the copies a build leaves next to the
 executable (`target/<profile>/…`), and the build copies files in but never removes one: a file
 deleted from the source, or left there by a build of another branch, is still read by the

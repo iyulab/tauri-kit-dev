@@ -128,6 +128,42 @@ test('runScenarios runs in order, stops at a failure, and says what the window s
   assert.match(lines.join('\n'), /✗ second\n {4}timed out waiting for the list\n {4}the window showed: Could not open/)
 })
 
+test('runScenarios fails a scenario that never finishes, says so, and goes on to quit — a window that stopped answering cannot hold the run', async () => {
+  const ran = []
+  const lines = []
+  const never = new Promise(() => {})
+  const app = { child: {}, cdp: { screenshot: () => never }, quit: async () => ran.push('quit') }
+  const started = Date.now()
+  const code = await runScenarios(
+    { hangs: () => never, after: async () => ran.push('after') },
+    { start: async () => ({ app }), argv: [], screenshots: undefined, failures: undefined, shown: () => never, scenarioTimeoutMs: 50, log: (l) => lines.push(l) },
+  )
+  assert.equal(code, 1)
+  assert.deepEqual(ran, ['quit'])
+  assert.match(lines.join('\n'), /✗ hangs\n {4}did not finish within 0\.05 s/)
+  assert.ok(Date.now() - started < 5_000, 'what the failure gathers is let go too')
+})
+
+test('runScenarios survives a scenario it let go failing afterwards, as a hung one does once its window is quit', async () => {
+  const lines = []
+  let unhandled = 0
+  const count = () => unhandled++
+  process.on('unhandledRejection', count)
+  try {
+    const app = { quit: async () => {} }
+    const code = await runScenarios(
+      { late: () => new Promise((_, reject) => setTimeout(() => reject(new Error('connection closed')), 100)) },
+      { start: async () => ({ app }), argv: ['--repeat', '2'], scenarioTimeoutMs: 20, log: (l) => lines.push(l) },
+    )
+    await new Promise((r) => setTimeout(r, 200))
+    assert.equal(code, 1)
+    assert.equal(unhandled, 0)
+    assert.match(lines.at(-1), /0 of 2 runs passed — failed: late/)
+  } finally {
+    process.off('unhandledRejection', count)
+  }
+})
+
 test('runScenarios keeps a picture of a failure without being asked for pictures, and says where', async () => {
   const { mkdtempSync, readdirSync } = await import('node:fs')
   const { tmpdir } = await import('node:os')

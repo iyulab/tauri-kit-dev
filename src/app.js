@@ -343,6 +343,20 @@ export function pictureName(name) {
   return `${name.replace(/[^\p{L}\p{N}]+/gu, '-')}.png`
 }
 
+/** How long what a failure gathers — what the window showed, its picture — may take. */
+const AFTER_FAILURE_MS = 15_000
+
+/** Settles as `promise` does, or fails with `message` once `ms` have passed first. */
+function within(ms, promise, message = `no answer within ${ms / 1000} s`) {
+  let timer
+  const late = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms)
+  })
+  // The race handles `promise` too, so what is let go may still fail later — a hung scenario does once the
+  // window is quit — without that ending the run as an unhandled rejection.
+  return Promise.race([promise, late]).finally(() => clearTimeout(timer))
+}
+
 /**
  * Runs scenarios in order against one window, each building on what the last left, and says how
  * it went. Returns the exit code: 0 when every run passed.
@@ -356,6 +370,9 @@ export function pictureName(name) {
  * @param {string} [options.failures]        where the picture of a failure goes without `screenshots`, so a
  *        scenario that fails only sometimes can be read afterwards (default: a new folder in the temp folder)
  * @param {(app: App) => Promise<string>} [options.shown]  what the window showed when a scenario failed
+ * @param {number} [options.scenarioTimeoutMs]  how long one scenario may take before it fails as unfinished
+ *        (default 5 minutes) — a step with no deadline of its own, waiting on a window that stopped answering,
+ *        would otherwise hold the run until something outside ends it, with nothing said
  * @param {(line: string) => void} [options.log]
  */
 export async function runScenarios(scenarios, {
@@ -364,6 +381,7 @@ export async function runScenarios(scenarios, {
   screenshots = process.env.E2E_SCREENSHOTS,
   failures = join(tmpdir(), 'tauri-kit-dev-failures', new Date().toISOString().replace(/[:.]/g, '-')),
   shown,
+  scenarioTimeoutMs = 300_000,
   log = console.log,
 }) {
   const { selected, repeat } = selectScenarios(Object.keys(scenarios), argv)
@@ -377,19 +395,21 @@ export async function runScenarios(scenarios, {
     return file
   }
 
+  const gathering = Math.min(AFTER_FAILURE_MS, scenarioTimeoutMs)
   const runOnce = async () => {
     let run
     try {
       run = await start()
       for (const name of selected) {
         try {
-          await scenarios[name](run.app, run.context)
+          await within(scenarioTimeoutMs, scenarios[name](run.app, run.context), `did not finish within ${scenarioTimeoutMs / 1000} s`)
           log(`  ✓ ${name}`)
           await picture(run.app, name)
         } catch (e) {
-          const said = shown && run.app.child ? await shown(run.app).catch(() => '') : ''
+          // A window that stopped answering would hold these too: each gets a moment, then is let go.
+          const said = shown && run.app.child ? await within(gathering, shown(run.app)).catch(() => '') : ''
           log(`  ✗ ${name}\n    ${String(e.message).replaceAll('\n', '\n    ')}${said ? `\n    the window showed: ${said}` : ''}`)
-          const kept = await picture(run.app, `FAILED ${name}`, screenshots ?? failures).catch(() => undefined)
+          const kept = await within(gathering, picture(run.app, `FAILED ${name}`, screenshots ?? failures)).catch(() => undefined)
           if (kept) log(`    picture: ${kept}`)
           return name
         }

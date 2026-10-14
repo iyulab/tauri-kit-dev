@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Added
+
+- `runScenarios({ scenarioTimeoutMs })`: a scenario that has not finished within the time (default 5 minutes)
+  fails with `did not finish within <n> s`, and the run goes on to quit the window. What a failure gathers — what
+  the window showed, its picture — is bounded too (15 s, or the scenario time when shorter).
+
+### Fixed
+
+- A scenario waiting on a step with no deadline of its own — a protocol command a window that stopped answering
+  never answers — held the run until something outside ended it, and the run said nothing about which scenario
+  it was in.
+
 ## [0.8.0] - 2026-10-13
 
 ### Added
