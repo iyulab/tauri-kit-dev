@@ -56,6 +56,27 @@ test('a repository: tracked files, unpushed messages, and history', (t) => {
   assert.ok(history.some((f) => f.where.endsWith(':a.txt') && f.why === 'name (history)'), 'a line removed since is still found')
 })
 
+test('without an upstream, a branch made from a pushed one is checked for its own messages only', (t) => {
+  const repo = mkdtempSync(join(tmpdir(), 'public-text-'))
+  t.after(() => rmSync(repo, { recursive: true, force: true }))
+  const git = (...args) => execFileSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { encoding: 'utf8' })
+  git('init', '-q')
+  writeFileSync(join(repo, 'a.txt'), 'fine\n')
+  git('add', '.')
+  git('commit', '-qm', 'old secret-project message, already public')
+  git('update-ref', 'refs/remotes/origin/main', 'HEAD')
+  git('switch', '-qc', 'feature')
+  git('commit', '-q', '--allow-empty', '-m', 'per secret-project, not pushed')
+  const config = { forbidden: [{ why: 'name', re: /\bsecret-project\b/ }], allowed: [] }
+  const hashOf = (rev) => git('rev-parse', '--short', rev).trim()
+
+  assert.deepEqual(checkRepo(repo, { config }).map((f) => f.where), [`@${hashOf('HEAD')}`])
+
+  // A detached HEAD — how CI checks a commit out — counts every commit.
+  git('switch', '-q', '--detach')
+  assert.equal(checkRepo(repo, { config }).length, 2)
+})
+
 test('a file whose path holds characters outside ASCII is checked too', (t) => {
   const repo = mkdtempSync(join(tmpdir(), 'public-text-'))
   t.after(() => rmSync(repo, { recursive: true, force: true }))

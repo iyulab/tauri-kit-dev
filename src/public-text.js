@@ -8,7 +8,8 @@
 //
 // What is checked in a git repository:
 //   - every tracked file as committed at HEAD
-//   - the messages of commits not yet pushed (all commits when the branch has no upstream)
+//   - the messages of commits not yet pushed: past the upstream; on a branch with none, the commits
+//     no remote-tracking branch holds; on a detached HEAD (a CI checkout), every commit
 //   - with `history`: every commit message, every line any commit reachable from any ref ever
 //     added (old versions of files stay readable once a repository is public), and tag messages
 //
@@ -107,7 +108,15 @@ export function checkRepo(repo, { config = {}, history = false } = {}) {
       git(repo, ['rev-parse', '--verify', '--quiet', '@{upstream}'])
       range = ['@{upstream}..HEAD']
     } catch {
-      // no upstream: every commit is unpushed
+      // No upstream. A local branch made from a pushed one has pushed everything it was made from,
+      // so only what no remote-tracking branch holds is unpushed. A detached HEAD is how CI checks a
+      // commit out, often beside a tracking ref of the very commit, so there every commit counts.
+      try {
+        git(repo, ['symbolic-ref', '--quiet', 'HEAD'])
+        range = ['HEAD', '--not', '--remotes']
+      } catch {
+        // detached: every commit is unpushed
+      }
     }
   }
   const log = git(repo, ['log', '--format=%h%x00%B%x01', ...range])

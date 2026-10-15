@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `public-text`: on a local branch with no upstream, only the commits no remote-tracking branch holds are checked
+  for their messages — before, every commit back to the first was, so a new branch made from a pushed one failed
+  on messages that were already public. A detached HEAD (how CI checks a commit out) still counts every commit.
+
 ## [0.9.0] - 2026-10-14
 
 ### Added
