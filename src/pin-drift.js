@@ -165,28 +165,11 @@ export async function checkPinDrift({
   const say = (level, text) => lines.push({ level, text })
 
   const judge = async (id, version, kind) => {
-    const have = parseVersion(version)
-    const newest = parseVersion(await latestOf(id, have.pre !== null))
-    const majorDiff = newest.major !== have.major
-    const minorGap = majorDiff ? Infinity : newest.minor - have.minor
-    const over = majorDiff || minorGap > maxMinorGap
-    const waiver = waivers.get(id)
-    waivers.delete(id)
-    const gap = majorDiff ? 'major version differs' : `${minorGap} minor behind`
-    const label = kind === 'transitive' ? ' (transitive)' : ''
-    if (!over) {
-      say('ok', `${id} ${have.raw}${label} (latest ${newest.raw}, ${newest.raw === have.raw ? 'current' : gap})`)
-      if (waiver) say('stale', `waiver for ${id} is no longer needed — remove it`)
-      return false
-    }
-    if (waiver && !waiver.expired) {
-      say('waived', `${id} ${have.raw}${label} (latest ${newest.raw}, ${gap}) until ${waiver.until}: ${waiver.reason}`)
-      return false
-    }
-    const why = waiver ? `waiver expired on ${waiver.until}` : 'no waiver'
-    const fix = kind === 'transitive' ? ' — move the pinned package that brings it in' : ''
-    say('FAIL', `${id} ${have.raw}${label} (latest ${newest.raw}, ${gap}; ${why})${fix}`)
-    return true
+    const newest = await latestOf(id, parseVersion(version).pre !== null)
+    const judged = judgeDrift({ id, version, newest, maxMinorGap, waivers, label: kind === 'transitive' ? ' (transitive)' : '' })
+    lines.push(...judged.lines)
+    if (judged.failed && kind === 'transitive') lines.at(-1).text += ' — move the pinned package that brings it in'
+    return judged.failed
   }
 
   let failures = 0
@@ -212,6 +195,35 @@ export async function checkPinDrift({
   for (const id of waivers.keys()) say('stale', `waiver for ${id} matches no tracked package — remove it`)
 
   return { lines, failures, pinned: pins.length, transitive: transitive.length }
+}
+
+/**
+ * One pin against the newest version: within the threshold (`maxMinorGap` minor versions, the same major), waived
+ * until a date that has not passed, or failed. Takes the package's waiver out of `waivers`, so the ones left after
+ * every package was judged match nothing — and says when a waiver is no longer needed.
+ *
+ * @param {{ id: string, version: string, newest: string, maxMinorGap: number, waivers: Map<string, Waiver & { expired: boolean }>, label?: string }} pin
+ * @returns {{ lines: Line[], failed: boolean }}
+ */
+export function judgeDrift({ id, version, newest: newestVersion, maxMinorGap, waivers, label = '' }) {
+  const have = parseVersion(version)
+  const newest = parseVersion(newestVersion)
+  const majorDiff = newest.major !== have.major
+  const minorGap = majorDiff ? Infinity : newest.minor - have.minor
+  const over = majorDiff || minorGap > maxMinorGap
+  const waiver = waivers.get(id)
+  waivers.delete(id)
+  const gap = majorDiff ? 'major version differs' : `${minorGap} minor behind`
+  if (!over) {
+    const lines = [{ level: 'ok', text: `${id} ${have.raw}${label} (latest ${newest.raw}, ${newest.raw === have.raw ? 'current' : gap})` }]
+    if (waiver) lines.push({ level: 'stale', text: `waiver for ${id} is no longer needed — remove it` })
+    return { lines, failed: false }
+  }
+  if (waiver && !waiver.expired) {
+    return { lines: [{ level: 'waived', text: `${id} ${have.raw}${label} (latest ${newest.raw}, ${gap}) until ${waiver.until}: ${waiver.reason}` }], failed: false }
+  }
+  const why = waiver ? `waiver expired on ${waiver.until}` : 'no waiver'
+  return { lines: [{ level: 'FAIL', text: `${id} ${have.raw}${label} (latest ${newest.raw}, ${gap}; ${why})` }], failed: true }
 }
 
 /** A report line as printed. @param {Line} line */

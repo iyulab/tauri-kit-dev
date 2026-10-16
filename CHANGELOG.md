@@ -9,6 +9,12 @@
   app's own entry in `Cargo.lock`, `tauri.conf.json`, `package.json`, both places in `package-lock.json`, a .NET
   project's `<Version>` — naming the file that differs, and with `--bump` writes the new version into all of them,
   each in place. A file whose version cannot be found leaves every file as it was.
+- `pin-drift --npm <package.json> --cargo <Cargo.toml> --repository <pattern>` (and `checkRegistryDrift` from
+  `/registry-drift`): the npm packages and crates an app declares are judged as its NuGet pins are — against the newest
+  stable version on npm and crates.io, failing on a major difference or more than `--max-minor-gap` minor versions
+  behind unless a waiver covers it. Which packages count is their repository on the registry, matched against
+  `--repository` — not a list of names. The NuGet options are now optional; the sources can be given together.
+  `judgeDrift` (from `/pin-drift`) is the one judgment both use.
 
 ### Fixed
 

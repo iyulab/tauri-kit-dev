@@ -33,6 +33,7 @@
     "./pin-drift": "./src/pin-drift.js",
     "./provenance": "./src/provenance.js",
     "./public-text": "./src/public-text.js",
+    "./registry-drift": "./src/registry-drift.js",
     "./sandbox": "./src/sandbox.js",
     "./versions": "./src/versions.js"
   },

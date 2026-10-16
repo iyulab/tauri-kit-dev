@@ -262,6 +262,24 @@ import { checkRepo, loadConfig } from '@iyulab/tauri-kit-dev/public-text'
 const findings = checkRepo('.', { config: await loadConfig('public-text.config.js'), history: true })
 ```
 
+## Pin drift
+
+```sh
+npx tauri-kit-dev pin-drift --props Directory.Packages.props --project helper/Helper.csproj --publisher my-org
+npx tauri-kit-dev pin-drift --npm package.json --cargo src-tauri/Cargo.toml --repository '^(git\+)?https://github\.com/my-org/'
+```
+
+Some dependencies are meant to be consumed at their current line — packages from the app's own publisher, released
+often alongside it. Falling behind them is silent: restore, build and tests stay green on an old pin. `pin-drift`
+compares each such pin with the newest stable version and fails when the major version differs or the pin is more than
+`--max-minor-gap` (default 5) minor versions behind, unless a waiver in `--waivers` — `[{ package, until: "YYYY-MM-DD",
+reason }]` — has not expired. Smaller gaps are reported and pass.
+
+Which packages count is read from the registries, never from a list of names: NuGet packages whose nuspec lists
+`--publisher` among its authors (from the restored graph of `--project`, transitive ones included), and the npm
+packages (`--npm`, any dependencies table) and crates (`--cargo`, any dependencies table, a renamed one under the crate
+it names) whose repository on npm or crates.io matches `--repository`. The sources can be given together or apart.
+
 ## Keeping the app's version in step
 
 ```sh

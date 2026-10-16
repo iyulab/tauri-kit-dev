@@ -7,13 +7,16 @@
 //       in with a flag run only when it is given. Exits 1 when a step failed, 2 when it did not
 //       start.
 //
-//   pin-drift --props <file> --project <file> --publisher <name> [--properties <Name=Value;…>] [--max-minor-gap <n>] [--waivers <file>]
+//   pin-drift [--props <file> --project <file> --publisher <name> [--properties <Name=Value;…>]] [--npm <package.json>] [--cargo <Cargo.toml>] [--repository <pattern>] [--max-minor-gap <n>] [--waivers <file>]
 //       Checks the NuGet pins of one publisher's packages in a Directory.Packages.props against
 //       nuget.org: a major difference, or more minor versions behind than allowed (default 5),
 //       fails unless a waiver with an unexpired date covers it. --project is the .NET project whose
 //       restored graph says which packages are used (restored first, with --properties as MSBuild
 //       properties — the ones the app is published with, such as RuntimeIdentifier=win-x64); --waivers
-//       a JSON list of { package, until, reason }. Exits 1 on drift.
+//       a JSON list of { package, until, reason }. --npm (a package.json) and --cargo (a Cargo.toml)
+//       judge their declared dependencies the same way, against npm and crates.io — those whose
+//       repository on the registry matches --repository (a pattern, case-insensitive); either alone
+//       needs no NuGet options. Exits 1 on drift.
 //
 //   notices --config <file> [--strict] [--check]
 //       Writes an app's third-party notices: every package its package managers say it ships, with
@@ -62,13 +65,14 @@ import { parseArgs } from '../src/args.js'
 import { loadGateConfig, runGate } from '../src/gate.js'
 import { fetchPinned, noticesText, shippedNotices, suggestPins, writeOrCheck } from '../src/notices.js'
 import { checkPinDrift, formatLine } from '../src/pin-drift.js'
+import { checkRegistryDrift } from '../src/registry-drift.js'
 import { checkMachine } from '../src/machine.js'
 import { checkRepo, loadConfig } from '../src/public-text.js'
 import { bumpVersions, checkVersions } from '../src/versions.js'
 import { runInSandbox } from '../src/sandbox.js'
 
 const USAGE = `usage: tauri-kit-dev gate --config <file> [--list] [--only a,b] [--skip c] [--<flag>]
-       tauri-kit-dev pin-drift --props <file> --project <file> --publisher <name> [--properties <Name=Value;…>] [--max-minor-gap <n>] [--waivers <file>]
+       tauri-kit-dev pin-drift [--props <file> --project <file> --publisher <name> [--properties <Name=Value;…>]] [--npm <package.json>] [--cargo <Cargo.toml>] [--repository <pattern>] [--max-minor-gap <n>] [--waivers <file>]
        tauri-kit-dev notices --config <file> [--strict] [--check]
        tauri-kit-dev notice-pins (--config <file> | --pins <file> --dir <dir>)
        tauri-kit-dev public-text [--config <file>] [--history] [<repo>...]
@@ -85,26 +89,45 @@ ${USAGE}`)
 }
 
 async function pinDrift(argv) {
-  const args = parseArgs(argv, { options: ['--props', '--project', '--publisher', '--properties', '--max-minor-gap', '--waivers'] })
-  const { '--props': props, '--project': project, '--publisher': publisher } = args.options
-  if (!props || !project || !publisher) throw new Error(`--props, --project and --publisher are required
+  const args = parseArgs(argv, {
+    options: ['--props', '--project', '--publisher', '--properties', '--max-minor-gap', '--waivers', '--npm', '--cargo', '--repository'],
+  })
+  const { '--props': props, '--project': project, '--publisher': publisher, '--npm': npm, '--cargo': cargo, '--repository': repository } = args.options
+  const nuget = Boolean(props || project || publisher)
+  if (nuget && (!props || !project || !publisher)) throw new Error(`NuGet pins need --props, --project and --publisher together
+${USAGE}`)
+  if ((npm || cargo) && !repository) throw new Error(`--npm and --cargo need --repository <pattern> — whose packages count
+${USAGE}`)
+  if (!nuget && !npm && !cargo) throw new Error(`nothing to check: give NuGet pins (--props …), an npm manifest (--npm), a Cargo.toml (--cargo), or several
 ${USAGE}`)
   const gapText = args.options['--max-minor-gap']
   const maxMinorGap = gapText === undefined ? 5 : Number.parseInt(gapText, 10)
   if (!Number.isInteger(maxMinorGap) || maxMinorGap < 0) throw new Error(`--max-minor-gap must be a whole number — got "${gapText}"`)
   const waiversFile = args.options['--waivers']
   const waivers = waiversFile ? JSON.parse(readFileSync(waiversFile, 'utf8')) : []
-  const properties = msbuildProperties(args.options['--properties'])
-  const report = await checkPinDrift({ props, project, properties, publisher, maxMinorGap, waivers })
-  for (const line of report.lines) console.log(formatLine(line))
-  if (report.failures) {
+  // Each source takes the waivers meant for it; one meant for none is said by the last.
+  let failures = 0
+  const counted = []
+  if (nuget) {
+    const report = await checkPinDrift({ props, project, properties: msbuildProperties(args.options['--properties']), publisher, maxMinorGap, waivers })
+    for (const line of report.lines) console.log(formatLine(line))
+    failures += report.failures
+    counted.push(`${report.pinned} pinned and ${report.transitive} transitive NuGet`)
+  }
+  if (npm || cargo) {
+    const report = await checkRegistryDrift({ npm, cargo, repository: new RegExp(repository, 'i'), maxMinorGap, waivers })
+    for (const line of report.lines) console.log(formatLine(line))
+    failures += report.failures
+    counted.push(`${report.checked} npm and crate`)
+  }
+  if (failures) {
     console.error(`
-${report.failures} package(s) drifted past the threshold (major difference or more than ${maxMinorGap} minor versions).`)
+${failures} package(s) drifted past the threshold (major difference or more than ${maxMinorGap} minor versions).`)
     console.error(`Upgrade them, or add a waiver with an expiry and a reason${waiversFile ? ` to ${waiversFile}` : ' (--waivers)'}.`)
     return 1
   }
   console.log(`
-Pin drift within threshold: ${report.pinned} pinned, ${report.transitive} transitive.`)
+Pin drift within threshold: ${counted.join(', ')}.`)
   return 0
 }
 
