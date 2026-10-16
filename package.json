@@ -35,6 +35,7 @@
     "./public-text": "./src/public-text.js",
     "./registry-drift": "./src/registry-drift.js",
     "./sandbox": "./src/sandbox.js",
+    "./telemetry": "./src/telemetry.js",
     "./versions": "./src/versions.js"
   },
   "bin": {

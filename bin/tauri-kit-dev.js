@@ -42,6 +42,13 @@
 //       src/public-text.js. --history also reads every commit, every line ever added and tag
 //       messages. Exits 1 when anything is found.
 //
+//   telemetry --app <resource> --resource-group <group> [--days <n>] [--version <x.y.z>]
+//       For each version, from the Application Insights resource tauri-kit-diagnostics sends to: how
+//       often it was started, on how many installations, how many sessions it left unfinished and how
+//       many failures it reported, over the last --days (default 7). Read with the Azure CLI as the
+//       signed-in person. --version exits 1 when that version has not been started (a release's
+//       verify step: has it arrived?).
+//
 //   versions --config <file> [--bump <x.y.z>]
 //       Checks that every file an app writes its version in holds the same one — Cargo.toml, its
 //       Cargo.lock entry, tauri.conf.json, package.json and its lock, a .NET project — and with
@@ -69,6 +76,7 @@ import { checkRegistryDrift } from '../src/registry-drift.js'
 import { checkMachine } from '../src/machine.js'
 import { checkRepo, loadConfig } from '../src/public-text.js'
 import { bumpVersions, checkVersions } from '../src/versions.js'
+import { formatTelemetry, readTelemetry } from '../src/telemetry.js'
 import { runInSandbox } from '../src/sandbox.js'
 
 const USAGE = `usage: tauri-kit-dev gate --config <file> [--list] [--only a,b] [--skip c] [--<flag>]
@@ -76,6 +84,7 @@ const USAGE = `usage: tauri-kit-dev gate --config <file> [--list] [--only a,b] [
        tauri-kit-dev notices --config <file> [--strict] [--check]
        tauri-kit-dev notice-pins (--config <file> | --pins <file> --dir <dir>)
        tauri-kit-dev public-text [--config <file>] [--history] [<repo>...]
+       tauri-kit-dev telemetry --app <resource> --resource-group <group> [--days <n>] [--version <x.y.z>]
        tauri-kit-dev versions --config <file> [--bump <x.y.z>]
        tauri-kit-dev machine [--dotnet]
        tauri-kit-dev sandbox <installer> --exe <file> [--identifier <id>] [--extra <script>] [--without-webview2] [--prepare]`
@@ -271,6 +280,27 @@ async function sandbox(argv) {
   return 0
 }
 
+async function telemetry(argv) {
+  const args = parseArgs(argv, { options: ['--app', '--resource-group', '--days', '--version'] })
+  const { '--app': app, '--resource-group': resourceGroup } = args.options
+  if (!app || !resourceGroup) throw new Error(`telemetry needs --app <resource> and --resource-group <group>
+${USAGE}`)
+  const daysText = args.options['--days'] ?? '7'
+  const days = Number.parseInt(daysText, 10)
+  if (!Number.isInteger(days) || days < 1 || String(days) !== daysText) throw new Error(`--days must be a whole number of days — got "${daysText}"`)
+  const rows = await readTelemetry({ app, resourceGroup, days })
+  console.log(rows.length ? formatTelemetry(rows) : `  nothing reported in the last ${days} days`)
+  const version = args.options['--version']
+  if (version === undefined) return 0
+  const row = rows.find((r) => r.version === version)
+  if (!row?.launches) {
+    console.error(`\n${version} has not been started anywhere in the last ${days} days.`)
+    return 1
+  }
+  console.log(`\n${version}: started ${row.launches} times on ${row.installs} installations, ${row.unfinished} unfinished, ${row.exceptions} failures reported.`)
+  return 0
+}
+
 async function versions(argv) {
   const args = parseArgs(argv, { options: ['--config', '--bump'] })
   const file = args.options['--config']
@@ -297,7 +327,7 @@ ${USAGE}`)
   return 0
 }
 
-const commands = { gate, notices, 'notice-pins': noticePins, 'pin-drift': pinDrift, 'public-text': publicText, versions, machine, sandbox }
+const commands = { gate, notices, 'notice-pins': noticePins, 'pin-drift': pinDrift, 'public-text': publicText, telemetry, versions, machine, sandbox }
 
 async function main([command, ...rest]) {
   const run = commands[command]

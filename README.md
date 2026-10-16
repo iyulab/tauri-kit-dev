@@ -302,6 +302,19 @@ Which packages count is read from the registries, never from a list of names: Nu
 packages (`--npm`, any dependencies table) and crates (`--cargo`, any dependencies table, a renamed one under the crate
 it names) whose repository on npm or crates.io matches `--repository`. The sources can be given together or apart.
 
+## What a release did once people ran it
+
+```sh
+npx tauri-kit-dev telemetry --app my-app-insights --resource-group my-app [--days 7] [--version 0.3.0]
+```
+
+For each version, from the Application Insights resource
+[tauri-kit-diagnostics](https://github.com/iyulab/tauri-kit) sends to: how often it was started (`SessionStart`), on how
+many installations, how many sessions it left unfinished (`SessionUnfinished` — it ended without saying so) and how many
+failures it reported, over the last `--days`. `--version` exits 1 when that version has not been started anywhere — the
+question a release's verify step asks. It reads as the person running it: the Azure CLI, signed in, gives the
+resource's id and a token, and the query goes to the Application Insights API — nothing here holds a key.
+
 ## Keeping the app's version in step
 
 ```sh

@@ -21,6 +21,10 @@
 - `leftovers` (in `launch` and `launchDev`) and `endLeftovers(names)`: the executables a run given up on may have left
   running are ended before the app starts — only the names given (Windows).
 - `readDiscovery(path)`: a helper's discovery file, read as soon as it is there and whole.
+- `telemetry --app <resource> --resource-group <group> [--days <n>] [--version <x.y.z>]` (and `readTelemetry` from
+  `/telemetry`): for each version, how often it was started, on how many installations, how many sessions it left
+  unfinished and how many failures it reported, read from the Application Insights resource tauri-kit-diagnostics sends
+  to, as the person signed in to the Azure CLI. `--version` fails when that version has not been started anywhere.
 
 ### Fixed
 
