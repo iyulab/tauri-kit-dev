@@ -327,8 +327,8 @@ export function endTree(child, platform = process.platform) {
  * @param {string[]} names
  */
 export async function endLeftovers(names, { platform = process.platform } = {}) {
-  if (platform !== 'win32' || names.length === 0) return []
   for (const name of names) if (!/^[\w.-]+\.exe$/i.test(name)) throw new Error(`leftovers take executable names (notes.exe), not "${name}"`)
+  if (platform !== 'win32' || names.length === 0) return []
   const ended = []
   for (const name of names) {
     const result = spawnSync('taskkill', ['/IM', name, '/T', '/F'], { encoding: 'utf8' })
