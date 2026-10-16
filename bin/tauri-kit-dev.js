@@ -39,6 +39,14 @@
 //       src/public-text.js. --history also reads every commit, every line ever added and tag
 //       messages. Exits 1 when anything is found.
 //
+//   versions --config <file> [--bump <x.y.z>]
+//       Checks that every file an app writes its version in holds the same one — Cargo.toml, its
+//       Cargo.lock entry, tauri.conf.json, package.json and its lock, a .NET project — and with
+//       --bump writes the new one into all of them, each in place (nothing is written when one of
+//       them holds no version to find). --config names a module exporting { files } — paths relative
+//       to the module's folder, a Cargo lock as { file, package } — see src/versions.js. Exits 1
+//       when they disagree.
+//
 //   machine [--dotnet]
 //       Checks this machine for what a Tauri build needs (on Windows: the MSVC Rust toolchain);
 //       --dotnet for an app that bundles a .NET helper (dotnet on PATH, DOTNET_ROOT for a per-user
@@ -56,6 +64,7 @@ import { fetchPinned, noticesText, shippedNotices, suggestPins, writeOrCheck } f
 import { checkPinDrift, formatLine } from '../src/pin-drift.js'
 import { checkMachine } from '../src/machine.js'
 import { checkRepo, loadConfig } from '../src/public-text.js'
+import { bumpVersions, checkVersions } from '../src/versions.js'
 import { runInSandbox } from '../src/sandbox.js'
 
 const USAGE = `usage: tauri-kit-dev gate --config <file> [--list] [--only a,b] [--skip c] [--<flag>]
@@ -63,6 +72,7 @@ const USAGE = `usage: tauri-kit-dev gate --config <file> [--list] [--only a,b] [
        tauri-kit-dev notices --config <file> [--strict] [--check]
        tauri-kit-dev notice-pins (--config <file> | --pins <file> --dir <dir>)
        tauri-kit-dev public-text [--config <file>] [--history] [<repo>...]
+       tauri-kit-dev versions --config <file> [--bump <x.y.z>]
        tauri-kit-dev machine [--dotnet]
        tauri-kit-dev sandbox <installer> --exe <file> [--identifier <id>] [--extra <script>] [--without-webview2] [--prepare]`
 
@@ -238,7 +248,33 @@ async function sandbox(argv) {
   return 0
 }
 
-const commands = { gate, notices, 'notice-pins': noticePins, 'pin-drift': pinDrift, 'public-text': publicText, machine, sandbox }
+async function versions(argv) {
+  const args = parseArgs(argv, { options: ['--config', '--bump'] })
+  const file = args.options['--config']
+  if (!file) throw new Error(`versions needs --config <file>
+${USAGE}`)
+  const { files } = await loadConfig(file)
+  if (!Array.isArray(files) || files.length === 0) throw new Error(`${file}: export { files } — the files that hold the version`)
+  const at = (path) => resolve(dirname(resolve(file)), path)
+  const bump = args.options['--bump']
+  if (bump !== undefined) {
+    bumpVersions(files, bump, at)
+    console.log(`  ✓ ${files.length} files now at ${bump}`)
+  }
+  const report = checkVersions(files, at)
+  for (const found of report.found) {
+    const mark = found.version !== null && found.version === report.version ? '✓' : '✗'
+    console.log(`  ${mark} ${found.file}: ${found.version ?? found.problem}`)
+  }
+  if (!report.agree) {
+    console.error('\nThe versions disagree: run with --bump <x.y.z> to write one into every file.')
+    return 1
+  }
+  console.log(`\nEvery file at ${report.version}.`)
+  return 0
+}
+
+const commands = { gate, notices, 'notice-pins': noticePins, 'pin-drift': pinDrift, 'public-text': publicText, versions, machine, sandbox }
 
 async function main([command, ...rest]) {
   const run = commands[command]

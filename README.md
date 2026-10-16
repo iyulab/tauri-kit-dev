@@ -262,6 +262,35 @@ import { checkRepo, loadConfig } from '@iyulab/tauri-kit-dev/public-text'
 const findings = checkRepo('.', { config: await loadConfig('public-text.config.js'), history: true })
 ```
 
+## Keeping the app's version in step
+
+```sh
+npx tauri-kit-dev versions --config versions.config.js [--bump <x.y.z>]
+```
+
+An app writes its version in several files, and a release that moves one and forgets another ships
+an installer whose About box, update feed and crash reports disagree about what it is. `versions`
+reads each file's own version — not a dependency's — and fails when they differ; `--bump` writes the
+new one into every file, each in place, the rest of its text as it was. Nothing is written when one
+of the files holds no version to find.
+
+```js
+// versions.config.js — paths relative to this file
+export default {
+  files: [
+    'src-tauri/Cargo.toml', // `version` in [package], or in [workspace.package]
+    { file: 'src-tauri/Cargo.lock', package: 'my-app' }, // the entry of the app's own crate
+    'src-tauri/tauri.conf.json', // the top-level `version`
+    'package.json',
+    'package-lock.json', // the top-level `version` and the root package's
+    'helper/Helper.csproj', // the first <Version>
+  ],
+}
+```
+
+The same as functions: `checkVersions(files, resolvePath)` and `bumpVersions(files, version, resolvePath)` from
+`@iyulab/tauri-kit-dev/versions`.
+
 ## Versioning
 
 While the version is `0.x`, a minor bump may break the API; a patch bump does not.

@@ -33,7 +33,8 @@
     "./pin-drift": "./src/pin-drift.js",
     "./provenance": "./src/provenance.js",
     "./public-text": "./src/public-text.js",
-    "./sandbox": "./src/sandbox.js"
+    "./sandbox": "./src/sandbox.js",
+    "./versions": "./src/versions.js"
   },
   "bin": {
     "tauri-kit-dev": "./bin/tauri-kit-dev.js"

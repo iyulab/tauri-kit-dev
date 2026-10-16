@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- `versions --config <file> [--bump <x.y.z>]` (and `checkVersions` · `bumpVersions` from `/versions`): checks that every
+  file an app writes its version in holds the same one — `Cargo.toml` (`[package]` or `[workspace.package]`), the
+  app's own entry in `Cargo.lock`, `tauri.conf.json`, `package.json`, both places in `package-lock.json`, a .NET
+  project's `<Version>` — naming the file that differs, and with `--bump` writes the new version into all of them,
+  each in place. A file whose version cannot be found leaves every file as it was.
+
 ### Fixed
 
 - `public-text`: on a local branch with no upstream, only the commits no remote-tracking branch holds are checked
