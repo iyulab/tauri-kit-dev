@@ -126,6 +126,28 @@ fn main() {
 }
 ```
 
+### While developing: `tauri dev`
+
+```js
+import { App, readDiscovery } from '@iyulab/tauri-kit-dev/app'
+
+const app = await App.launchDev({
+  cwd: '.', // where `npx tauri dev` runs (the default command; `command` names another)
+  port: 9224,
+  ready: `!!document.querySelector('my-app')`,
+  leftovers: ['my-app.exe', 'My.Helper.exe'], // what a run given up on may have left running
+})
+const helper = await readDiscovery(join(dataDir, 'helper.json')) // where a helper the build started listens
+// …drive app.cdp as with a built exe…
+await app.quit() // ends the dev server, the build and the app, not only the shell
+```
+
+`launchDev` runs a development command in place of a built executable and waits for its window the same way — longer
+by default (10 minutes), since the first build takes minutes. `leftovers`, here or in `launch`, names the executables
+ended before the app starts (`endLeftovers`, Windows): only those names, and one not running is passed over.
+`readDiscovery` reads a helper's discovery file — `{ port, … }`, as tauri-kit's `DiscoveryFile` writes it — as soon as it
+is there and whole.
+
 ## Checking the installer
 
 ```js

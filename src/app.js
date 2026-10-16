@@ -3,7 +3,7 @@
 // asked. What the app is called, which port it uses and when its window counts as ready are the
 // app's to say.
 
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
@@ -154,9 +154,12 @@ export class App {
    * @param {number} [options.timeoutMs]      how long to wait for the window (default 60 s)
    * @param {string} [options.webviewProfile] text in the command line of the app's WebView2 processes — its
    *        identifier, which names its profile folder. `quit` then also waits for those processes (Windows).
+   * @param {string[]} [options.leftovers]    executables an earlier run may have left running — the app's, its
+   *        helpers' (`notes.exe`, `Notes.Host.exe`) — ended before the app starts (see `endLeftovers`)
    */
   static async launch(options) {
-    const { exe, port, ready = `document.readyState === 'complete'`, env = {}, args = [], helpersName = '__e2e', debugPortFromEnv = true, timeoutMs = 60_000 } = options
+    const { exe, port, ready = `document.readyState === 'complete'`, env = {}, args = [], helpersName = '__e2e', debugPortFromEnv = true, timeoutMs = 60_000, leftovers = [] } = options
+    if (leftovers.length) await endLeftovers(leftovers)
     // A window left over from an earlier run would answer in place of the one about to start.
     if (await portAnswers(port)) {
       throw new Error(`something already answers on debugging port ${port} — close the window an earlier run left open`)
@@ -164,11 +167,18 @@ export class App {
     // `this`: an app's own subclass launches as itself.
     const app = new this()
     app.#options = options
-    app.child = spawn(exe, args, { stdio: 'ignore', env: { ...process.env, ...(debugPortFromEnv ? debugEnv(port) : {}), ...env } })
+    const environment = { ...process.env, ...(debugPortFromEnv ? debugEnv(port) : {}), ...env }
+    // A development command (`tauri dev`) runs through a shell, in its own process group where there is one, so `quit`
+    // ends everything it started — the dev server, the build, the app — and not only the shell.
+    app.child = options.command
+      ? spawn(options.command, { cwd: options.cwd, shell: true, stdio: 'ignore', env: environment, detached: process.platform !== 'win32' })
+      : spawn(exe, args, { stdio: 'ignore', env: environment })
     // A run that ends without quitting — an error past its `finally`, `process.exit`, a hang given up on
     // with Ctrl+C — would leave the window running, and the next launch would meet it.
     app.#endWithProcess(app.child)
-    const exited = new Promise((_, reject) => app.child.once('exit', (code) => reject(new Error(`${exe} exited with ${code} before its window was ready`))))
+    const exited = new Promise((_, reject) =>
+      app.child.once('exit', (code) => reject(new Error(`${exe ?? options.command} exited with ${code} before its window was ready`))),
+    )
     exited.catch(() => {})
     try {
       const page = await Promise.race([findPage(port, { timeoutMs }), exited])
@@ -177,13 +187,26 @@ export class App {
       await app.cdp.evaluate(helpers(helpersName))
     } catch (e) {
       // Asked while the app still runs: its browser's command line says whether the port ever reached it.
-      const why = String(e?.message).startsWith('no page on debugging port')
+      const why = String(e?.message).startsWith('no page on debugging port') && exe
         ? await webviewCommandLines().then((lines) => lines && debugPortDiagnosis(port, basename(exe), lines)).catch(() => undefined)
         : undefined
       await app.quit()
       throw why ? new Error(`${e.message} — ${why}`, { cause: e }) : e
     }
     return app
+  }
+
+  /**
+   * Starts the app the way it is developed — `command` (default `npx tauri dev`) run in `cwd`, which builds it and
+   * starts it, its front end served by a dev server — and waits for its window as `launch` does for a built one. The
+   * first build takes minutes, so the window is waited for longer (default 10 minutes). `quit` ends everything the
+   * command started. Its other options are `launch`'s.
+   *
+   * @param {Omit<Parameters<typeof App.launch>[0], 'exe' | 'args'> & { cwd: string, command?: string }} options
+   */
+  static async launchDev({ command = 'npx tauri dev', timeoutMs = 600_000, ...options }) {
+    if (!options.cwd) throw new Error('launchDev needs { cwd } — the folder the dev command runs in')
+    return this.launch({ ...options, command, timeoutMs })
   }
 
   /** Ends the app the hard way and starts it again in this same App, with `env` added. */
@@ -199,8 +222,9 @@ export class App {
 
   /** Ends `child` when this process exits or is interrupted, until `quit` ends it first. */
   #endWithProcess(child) {
+    const tree = Boolean(this.#options?.command)
     const end = () => {
-      if (child.exitCode === null && child.signalCode === null) child.kill()
+      if (child.exitCode === null && child.signalCode === null) tree ? endTree(child) : child.kill()
     }
     // Ctrl+C would otherwise end this process without its `exit` handlers; with a handler of ours
     // the default goes away, so the interrupt ends the process once the window is ended.
@@ -226,7 +250,8 @@ export class App {
     this.#stopEnding = undefined
     const child = this.child
     if (!child) return
-    child.kill()
+    if (this.#options.command) endTree(child)
+    else child.kill()
     await new Promise((done) => (child.exitCode !== null || child.signalCode !== null ? done() : child.once('exit', done)))
     this.child = undefined
     const until = Date.now() + 15_000
@@ -273,6 +298,63 @@ export class App {
       `field ${selector}`,
     )
     await this.cdp.insertText(text)
+  }
+}
+
+/**
+ * Ends `child` and every process it started — a development command's dev server, build and app outlive the shell
+ * that started them otherwise. Synchronous, so it can run as this process exits.
+ */
+export function endTree(child, platform = process.platform) {
+  if (child.exitCode !== null || child.signalCode !== null || child.pid === undefined) return
+  if (platform === 'win32') spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' })
+  else {
+    try {
+      // Started detached: its own process group, whose id is its pid.
+      process.kill(-child.pid, 'SIGTERM')
+    } catch {
+      child.kill()
+    }
+  }
+}
+
+/**
+ * Ends what an earlier run left running: every process of each executable in `names` (`notes.exe`, `Notes.Host.exe`).
+ * A run that was given up on can leave the app, or a helper it started, holding the debugging port, the data folder or
+ * a file a build replaces. Only the names given are touched; one that is not running is passed over. Answers the names
+ * that were running. Windows only — the executables named are Windows'; elsewhere there is nothing to end.
+ *
+ * @param {string[]} names
+ */
+export async function endLeftovers(names, { platform = process.platform } = {}) {
+  if (platform !== 'win32' || names.length === 0) return []
+  for (const name of names) if (!/^[\w.-]+\.exe$/i.test(name)) throw new Error(`leftovers take executable names (notes.exe), not "${name}"`)
+  const ended = []
+  for (const name of names) {
+    const result = spawnSync('taskkill', ['/IM', name, '/T', '/F'], { encoding: 'utf8' })
+    if (result.status === 0) ended.push(name)
+  }
+  return ended
+}
+
+/**
+ * The discovery file a helper process writes once it listens — `{ "port": …, … }`, as tauri-kit's `DiscoveryFile`
+ * publishes it — read as soon as it is there and whole. A dev run's helper is started by the build, not by the run, so
+ * where it listens is learned from this file.
+ *
+ * @param {string} path @param {{ timeoutMs?: number }} [options]
+ */
+export async function readDiscovery(path, { timeoutMs = 60_000 } = {}) {
+  const { readFile } = await import('node:fs/promises')
+  const until = Date.now() + timeoutMs
+  for (;;) {
+    try {
+      return JSON.parse(await readFile(path, 'utf8'))
+    } catch (e) {
+      // Not there yet, or caught half-written: asked again until it is whole.
+      if (Date.now() > until) throw new Error(`no discovery file at ${path} within ${Math.round(timeoutMs / 1000)} s (${e.code ?? e.message})`)
+      await new Promise((r) => setTimeout(r, 200))
+    }
   }
 }
 

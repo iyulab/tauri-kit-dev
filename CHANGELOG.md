@@ -15,6 +15,12 @@
   behind unless a waiver covers it. Which packages count is their repository on the registry, matched against
   `--repository` — not a list of names. The NuGet options are now optional; the sources can be given together.
   `judgeDrift` (from `/pin-drift`) is the one judgment both use.
+- `App.launchDev({ cwd, command = 'npx tauri dev', … })`: drives the app the way it is developed — the command run in
+  `cwd` through a shell, its window waited for as `launch` waits for a built one (10 minutes by default, for the first
+  build) — and `quit` ends everything the command started, not only the shell (`endTree`).
+- `leftovers` (in `launch` and `launchDev`) and `endLeftovers(names)`: the executables a run given up on may have left
+  running are ended before the app starts — only the names given (Windows).
+- `readDiscovery(path)`: a helper's discovery file, read as soon as it is there and whole.
 
 ### Fixed
 
