@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-17
+
 ### Added
 
 - `versions --config <file> [--bump <x.y.z>]` (and `checkVersions` · `bumpVersions` from `/versions`): checks that every
