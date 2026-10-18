@@ -54,7 +54,9 @@ export function helpers(name = '__e2e') {
   /**
    * Watches the next press for whether it lands on el, still enabled. The page can move or turn off
    * el in the moment between measuring its box and the press arriving; a press that misses is kept
-   * from whatever it hit instead, and disarm() says so, so the click can be tried again.
+   * from whatever it hit instead, and disarm() says so, so the click can be tried again. The press lands
+   * when its click reaches el: an element turned off between the press going down and coming up gets no
+   * click, so that press missed too.
    */
   arm(el) {
     if (!this.listening) {
@@ -62,9 +64,19 @@ export function helpers(name = '__e2e') {
       const watch = (e) => {
         const armed = this.armed
         if (!armed) return
-        if (armed.landed === undefined && e.type === 'pointerdown') {
+        if (armed.landed === undefined && armed.pressed === undefined && e.type === 'pointerdown') {
           const off = (node) => node.disabled || node.hasAttribute?.('disabled')
-          armed.landed = e.composedPath().includes(armed.el) && !off(armed.el)
+          armed.pressed = e.composedPath().includes(armed.el) && !off(armed.el)
+          if (!armed.pressed) armed.landed = false
+        }
+        if (armed.landed === undefined && armed.pressed && e.type === 'click') {
+          const onIt = e.composedPath().includes(armed.el)
+          // Gone since the press went down: it did its work then, and this click, wherever it fell, is not the page's.
+          armed.landed = onIt || !armed.el.isConnected
+          if (!onIt) {
+            e.preventDefault()
+            e.stopImmediatePropagation()
+          }
         }
         if (armed.landed === false) {
           e.preventDefault()
@@ -73,13 +85,17 @@ export function helpers(name = '__e2e') {
       }
       for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) window.addEventListener(type, watch, true)
     }
-    this.armed = { el, landed: undefined }
+    this.armed = { el, pressed: undefined, landed: undefined }
   },
-  /** Whether the press since arm() landed on its element; a press that never arrived did not. */
+  /**
+   * Whether the press since arm() landed on its element; a press that never arrived did not. An element the
+   * press took away before its click (a menu item that acts as the press goes down) did its work: that landed.
+   */
   disarm() {
-    const landed = this.armed?.landed === true
+    const armed = this.armed
     this.armed = undefined
-    return landed
+    if (!armed) return false
+    return armed.landed === true || (armed.landed === undefined && armed.pressed === true && armed.el.isConnected === false)
   },
 }; true`
 }

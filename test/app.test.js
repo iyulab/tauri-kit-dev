@@ -50,8 +50,8 @@ function pressing() {
   const listeners = []
   const window = { addEventListener: (type, fn, capture) => listeners.push({ type, fn, capture }) }
   new Function('window', 'document', helpers('__t'))(window, {})
-  const press = (path) =>
-    ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].map((type) => {
+  const press = (path, types = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) =>
+    types.map((type) => {
       const e = { type, composedPath: () => path, stopped: false, prevented: false }
       e.stopImmediatePropagation = () => (e.stopped = true)
       e.preventDefault = () => (e.prevented = true)
@@ -87,6 +87,34 @@ test('a press that hits something else, or the element turned off, is kept from 
   assert.equal(h.disarm(), false, 'a press that never arrived did not land')
   const after = press([{ other: true }])
   assert.ok(after.every((e) => !e.stopped), 'disarmed, the listeners let every press by')
+})
+
+test('an element turned off between the press going down and up gets no click: the press missed', () => {
+  const { h, press } = pressing()
+  const button = { disabled: false, hasAttribute: () => false, isConnected: true }
+  h.arm(button)
+  press([button], ['pointerdown', 'mousedown'])
+  button.disabled = true
+  // A turned-off control gets its pointer up but no mouse up and no click.
+  press([button], ['pointerup'])
+  assert.equal(h.disarm(), false)
+})
+
+test('an element the press took away before its click did its work: the press landed', () => {
+  const { h, press } = pressing()
+  const item = { disabled: false, hasAttribute: () => false, isConnected: true }
+  h.arm(item)
+  press([item], ['pointerdown', 'mousedown'])
+  item.isConnected = false
+  const [, , click] = press([{ other: true }], ['pointerup', 'mouseup', 'click'])
+  assert.ok(click.stopped, 'the click that fell where it was is kept from the page')
+  assert.equal(h.disarm(), true)
+
+  h.arm(item)
+  item.isConnected = true
+  press([item], ['pointerdown', 'mousedown'])
+  item.isConnected = false
+  assert.equal(h.disarm(), true, 'gone with no click at all')
 })
 
 test('click tries again when the press missed, and says so when it keeps missing', async () => {

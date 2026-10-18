@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `App.click` counts a press as landed only when its click reaches the element. A control the page turned off between
+  the press going down and coming up gets no click, and was counted as pressed — the scenario then waited for what the
+  click should have opened; it is now tried again like any other missed press. An element the press took away before
+  its click (a menu item that acts as the press goes down) still counts as pressed, and a click that falls on whatever
+  lay under it is kept from the page.
+
 ## [0.10.0] - 2026-10-17
 
 ### Added
