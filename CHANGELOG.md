@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-10-20
+
 ### Fixed
 
 - `App.click` counts a press as landed only when its click reaches the element. A control the page turned off between
