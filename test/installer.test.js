@@ -4,7 +4,37 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { nsisArgs, pickInstaller, pickReleaseInstaller, pickUpgradeFrom, profileSnapshots, withAppDataSetAside } from '../src/installer.js'
+import { nsisArgs, pickInstaller, pickReleaseInstaller, pickUpdateWalk, pickUpgradeFrom, profileSnapshots, readUpdateState, updateReady, withAppDataSetAside } from '../src/installer.js'
+
+test('an update walk goes from the release before the newest to the newest', () => {
+  const releases = [
+    { tagName: 'v0.1.2', publishedAt: '2026-09-20T00:00:00Z' },
+    { tagName: 'v0.1.4', publishedAt: '2026-09-30T00:00:00Z' },
+    { tagName: 'v0.1.3', publishedAt: '2026-09-25T00:00:00Z' },
+  ]
+  assert.deepEqual(pickUpdateWalk(releases), { from: 'v0.1.3', to: 'v0.1.4' })
+  assert.deepEqual(pickUpdateWalk(releases, 'v0.1.2'), { from: 'v0.1.2', to: 'v0.1.4' })
+  assert.equal(pickUpdateWalk(releases, 'v0.1.4'), null, 'the newest cannot update to itself')
+  assert.equal(pickUpdateWalk(releases.slice(1, 2)), null, 'one release has nothing before it')
+  assert.equal(pickUpdateWalk([]), null)
+})
+
+test('reads only the state the update crate keeps', () => {
+  const state = { format: 'tauri-kit-update/1', announced: '0.1.4', ready: '0.1.4' }
+  assert.deepEqual(readUpdateState(JSON.stringify(state)), state)
+  assert.equal(readUpdateState(JSON.stringify({ latest: '0.1.4', ready: '0.1.4' })), null, 'an updater the app had before')
+  assert.equal(readUpdateState('{'), null)
+  assert.equal(readUpdateState(null), null)
+})
+
+test('ready: the version announced and its installer downloaded, with or without the v', () => {
+  const state = { format: 'tauri-kit-update/1', announced: '0.1.4', ready: '0.1.4' }
+  assert.ok(updateReady(state, 'v0.1.4'))
+  assert.ok(updateReady(state, '0.1.4'))
+  assert.ok(!updateReady({ ...state, ready: undefined }, 'v0.1.4'), 'announced, still downloading')
+  assert.ok(!updateReady({ ...state, announced: '0.1.5', ready: '0.1.5' }, 'v0.1.4'), 'a newer one than the walk expects')
+  assert.ok(!updateReady(null, 'v0.1.4'))
+})
 
 test('NSIS: silent, and the folder last and unquoted', () => {
   assert.deepEqual(nsisArgs('C:\\Temp\\my app'), ['/S', '/D=C:\\Temp\\my app'])

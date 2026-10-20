@@ -165,6 +165,33 @@ Installing over the latest published version (`pickUpgradeFrom`, `downloadInstal
 that WebView2 profile copies are dropped (`profileSnapshots`, `seedProfileSnapshot`) use the same
 pieces.
 
+An app that updates itself with `tauri-kit-update` can have that path walked without a person:
+`walkUpdate` installs the previous published release, starts it, waits until it has found the newest
+release and downloaded its installer, has it install (by default by closing its window, for an app
+that installs on close), and checks the installed version, that the app was not started again, and
+that the next launch lets go of the installer it kept. A release build looks for updates where it was
+built to, so the newest release must already be published.
+
+```js
+import { join } from 'node:path'
+import { walkUpdate, withAppDataSetAside } from '@iyulab/tauri-kit-dev/installer'
+
+const data = join(process.env.LOCALAPPDATA, 'com.example.my-app')
+const { from, to, steps } = await withAppDataSetAside(data, () =>
+  walkUpdate({
+    repo: 'example/my-app-releases',
+    exe: 'my-app.exe',
+    product: 'My App', // its uninstall entry; the walk refuses to run while it is installed
+    stateFile: join(data, 'update.json'),
+    keptInstaller: (version) => join(data, 'updates', `My App_${version}_x64-setup.exe`),
+    after: async (target) => { /* the app's own checks on the updated copy */ },
+  }),
+)
+```
+
+`install` starts the update another way (an app that installs when asked), and `restarts: true`
+expects the installer to start the app again.
+
 An installed copy keeps its data where the person's own copy does (`%LOCALAPPDATA%\<identifier>`),
 and `startsAndStays` ends it by force. Wrap a check in `withAppDataSetAside` so whatever the app writes
 there — its identity, session or diagnostic records, the web view profile — does not stay behind for

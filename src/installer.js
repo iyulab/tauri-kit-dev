@@ -9,7 +9,7 @@
 
 import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, readdirSync } from 'node:fs'
-import { mkdir, mkdtemp, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -195,6 +195,193 @@ export async function withAppDataSetAside(appData, body, { retries = 40 } = {}) 
     await rm(appData, { recursive: true, force: true, maxRetries: retries, retryDelay: 250 })
     if (had) await rename(aside, appData)
   }
+}
+
+/**
+ * The two releases an update walk goes between: `to` the newest published, `from` the one asked for
+ * or the newest published before it. Null when there is no earlier release, or `from` is `to` — a
+ * release build looks for updates where it was built to, so the version to update to must already
+ * be published.
+ *
+ * @param {{ tagName: string, publishedAt: string }[]} releases  published (not draft) releases
+ * @param {string} [asked]  the tag to update from
+ */
+export function pickUpdateWalk(releases, asked) {
+  const [newest] = [...releases].sort((a, b) => b.publishedAt.localeCompare(a.publishedAt))
+  if (!newest) return null
+  const from = pickUpgradeFrom(releases, newest.tagName, asked)
+  if (!from || from === newest.tagName) return null
+  return { from, to: newest.tagName }
+}
+
+const UPDATE_STATE = 'tauri-kit-update/1'
+
+/**
+ * What `tauri-kit-update` keeps between launches, read from its state file's text; null when it is
+ * not that file (missing, unreadable, or written by something else, such as an updater the app had
+ * before).
+ *
+ * @param {string | null | undefined} text
+ * @returns {{ announced?: string, ready?: string, failed?: string } | null}
+ */
+export function readUpdateState(text) {
+  if (!text) return null
+  try {
+    const state = JSON.parse(text)
+    return state?.format === UPDATE_STATE ? state : null
+  } catch {
+    return null
+  }
+}
+
+const bare = (version) => version.replace(/^v/, '')
+
+/** Whether the app announced `version` and has its installer downloaded and checked. */
+export function updateReady(state, version) {
+  return state?.announced === bare(version) && state?.ready === bare(version)
+}
+
+/** One Windows PowerShell command's output, trimmed. */
+function powershell(command) {
+  return spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8' }).stdout?.trim() ?? ''
+}
+
+const quoted = (text) => `'${text.replaceAll("'", "''")}'`
+
+/** The version of `product` this user has installed, from its uninstall entry; null when there is none. */
+export function installedVersion(product) {
+  const command = `Get-ChildItem HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall | ForEach-Object { Get-ItemProperty $_.PSPath } | Where-Object DisplayName -eq ${quoted(product)} | Select-Object -First 1 -ExpandProperty DisplayVersion`
+  return powershell(command) || null
+}
+
+/** The ids of the running processes whose program is in `dir`. */
+export function processesIn(dir) {
+  const command = `Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -like ${quoted(`${dir}\\*`)} } | ForEach-Object ProcessId`
+  return powershell(command).split(/\s+/).filter(Boolean).map(Number)
+}
+
+/**
+ * Asks a process to close its main window, as a person closing it would, so whatever the app does
+ * on close runs — an update installed on close among it. Ending it by force would skip that.
+ */
+export function closeMainWindow(pid) {
+  powershell(`(Get-Process -Id ${Number(pid)} -ErrorAction SilentlyContinue).CloseMainWindow() | Out-Null`)
+}
+
+async function until(what, timeoutMs, everyMs = 1000) {
+  const end = Date.now() + timeoutMs
+  for (;;) {
+    const answer = await what()
+    if (answer || Date.now() >= end) return answer
+    await sleep(everyMs)
+  }
+}
+
+/**
+ * Walks the update a person's copy takes on its own: installs the previous published release
+ * (`withInstalled`), starts it, waits until it finds the newest release and has its installer
+ * downloaded and checked (read from the `tauri-kit-update` state file), has it install the update
+ * (`install` — by default closing its main window, for an app that installs on close), and checks
+ * that the installed version is the new one, that the app was not started again, and that the next
+ * launch lets go of the installer it kept. Windows only.
+ *
+ * The update installer runs without a folder and installs where the previous version was, so the
+ * walk installs into a temporary folder like `withInstalled`; but the uninstall entry is the user's
+ * own, so it refuses to run while `product` is installed. Wrap it in `withAppDataSetAside` to leave
+ * the person's data folder as it was.
+ *
+ * Each step is answered as `{ name, ok, detail }`; the walk goes on after a failed step only where
+ * the next one still means something, and always uninstalls.
+ *
+ * @param {object} options
+ * @param {string} options.repo  where the releases are published (`owner/name`)
+ * @param {string} options.exe  the app's file name
+ * @param {string} options.product  the name of its uninstall entry (the product name)
+ * @param {string} options.stateFile  where the app keeps the `tauri-kit-update` state
+ * @param {string} [options.from]  the tag to update from (default: the newest before the newest)
+ * @param {string} [options.pattern]  the installer among a release's files (default `*_x64-setup.exe`)
+ * @param {(version: string) => string} [options.keptInstaller]  where the app keeps a downloaded installer, if in a file
+ * @param {(app: { pid: number, target: string }) => Promise<void> | void} [options.install]  starts the update's install
+ * @param {boolean} [options.restarts]  whether the install starts the app again (default false)
+ * @param {(target: string) => Promise<void> | void} [options.before]  the app's own checks before updating (e.g. leave a mark in its data)
+ * @param {(target: string) => Promise<void> | void} [options.after]  the app's own checks on the updated copy, while it runs
+ * @param {{ ready?: number, installed?: number, cleared?: number }} [options.timeoutsMs]
+ * @returns {Promise<{ from: string, to: string, steps: { name: string, ok: boolean, detail?: string }[] }>}
+ */
+export async function walkUpdate({
+  repo,
+  exe,
+  product,
+  stateFile,
+  from: asked,
+  pattern = '*_x64-setup.exe',
+  keptInstaller,
+  install = ({ pid }) => closeMainWindow(pid),
+  restarts = false,
+  before,
+  after,
+  timeoutsMs = {},
+}) {
+  const { ready: readyMs = 10 * 60_000, installed: installedMs = 3 * 60_000, cleared: clearedMs = 3 * 60_000 } = timeoutsMs
+  const walk = pickUpdateWalk(publishedReleases(repo), asked)
+  if (!walk) throw new Error(`${repo} has no published release to update from${asked ? ` (${asked})` : ''} to its newest`)
+  const { from, to } = walk
+  const already = installedVersion(product)
+  if (already) throw new Error(`${product} ${already} is installed; the walk would take over its uninstall entry — uninstall it first`)
+
+  const steps = []
+  const step = (name, ok, detail) => {
+    steps.push({ name, ok: Boolean(ok), ...(detail ? { detail: String(detail) } : {}) })
+    return Boolean(ok)
+  }
+  const state = async () => readUpdateState(await readFile(stateFile, 'utf8').catch(() => null))
+  const dir = await realpath(await mkdtemp(join(tmpdir(), 'tauri-app-update-')))
+  try {
+    const installer = await downloadInstaller({ repo, tag: from, dir, pattern })
+    await withInstalled(installer, async (target) => {
+      const app = join(target, exe)
+      const start = () => spawn(app, [], { stdio: 'ignore', detached: true }).unref()
+      try {
+        step(`installed ${from}`, installedVersion(product) === bare(from), installedVersion(product))
+        await before?.(target)
+
+        start()
+        const pid = await until(() => processesIn(target)[0], 30_000, 500)
+        const found = await until(async () => updateReady(await state(), to), readyMs, 5000)
+        if (!step(`found ${to} and has its installer ready`, pid && found, JSON.stringify(await state()))) return
+        if (keptInstaller) step('kept the installer in a file', existsSync(keptInstaller(bare(to))), keptInstaller(bare(to)))
+
+        await install({ pid, target })
+        // The uninstall entry is written before the files are: wait for the program itself to be the new one.
+        const updated = await until(() => installedVersion(product) === bare(to) && fileVersion(app).startsWith(bare(to)), installedMs)
+        if (!step(`installed ${to}`, updated, `entry ${installedVersion(product)} · ${exe} ${fileVersion(app)}`)) return
+        // An installer that starts the app does so as it finishes; give it the time to.
+        const running = await until(() => processesIn(target).length > 0, restarts ? 60_000 : 5000, 500)
+        step(restarts ? 'started the app again' : 'did not start the app', restarts === running, processesIn(target).join(' '))
+
+        if (!running) start()
+        const cleared = await until(async () => {
+          const s = await state()
+          return Boolean(s && !s.ready && !(keptInstaller && existsSync(keptInstaller(bare(to)))))
+        }, clearedMs, 5000)
+        step('the next launch let go of the installer', cleared, JSON.stringify(await state()))
+        await after?.(target)
+
+        for (const id of processesIn(target)) closeMainWindow(id)
+        step('closed', await until(() => !processesIn(target).length, 30_000, 500), processesIn(target).join(' '))
+      } finally {
+        // A walk that stopped early leaves the app running, and the uninstaller cannot remove what it holds.
+        for (const id of processesIn(target)) {
+          try {
+            process.kill(id)
+          } catch {}
+        }
+      }
+    }, { exe })
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+  return { from, to, steps }
 }
 
 /** Leaves a profile copy the way a runtime update would, so a check can see the app remove it. */

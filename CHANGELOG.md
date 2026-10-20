@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Added
+
+- `walkUpdate` (`installer`): walks the update an installed copy takes on its own — installs the
+  previous published release into a temporary folder, starts it, waits until its `tauri-kit-update`
+  state says the newest release is found and its installer ready, has it install (by default by
+  closing its main window), and answers each step: the new version installed in the same folder, the
+  app not started again (or started, with `restarts`), the kept installer let go of on the next launch.
+  It refuses to run while the product is installed, since the walk's copy takes over the user's
+  uninstall entry. With the pieces it uses: `pickUpdateWalk`, `readUpdateState`, `updateReady`,
+  `installedVersion`, `processesIn` and `closeMainWindow`.
+
 ## [0.10.1] - 2026-10-20
 
 ### Fixed
