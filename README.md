@@ -161,6 +161,12 @@ await withInstalled(installer, async (target) => {
 }, { exe: 'my-app.exe' }) // uninstalled afterwards, and checked to be gone
 ```
 
+An NSIS installer records the folder it installed into (the default value of
+`HKCU\Software\<maker>\<product>`) and its uninstaller leaves it there, so the next plain install of
+the product would go into the removed temporary folder. `withInstalled` puts that value back as it was
+before the install — the value it held, no value, or no key — and warns when the value it puts back
+names a folder that does not exist (left by another tool).
+
 Installing over the latest published version (`pickUpgradeFrom`, `downloadInstaller`) and checking
 that WebView2 profile copies are dropped (`profileSnapshots`, `seedProfileSnapshot`) use the same
 pieces.

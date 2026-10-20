@@ -103,7 +103,10 @@ export async function uninstall(target, { exe, timeoutMs = 10_000 } = {}) {
 
 /**
  * Installs into a fresh temporary folder, runs `body` with that folder, then uninstalls and removes
- * the folder — whether `body` passed or not.
+ * the folder — whether `body` passed or not. An NSIS installer keeps the folder it installed into as
+ * the default value of `HKCU\Software\<maker>\<product>`, and its uninstaller leaves it there, so
+ * the next plain install of the product would go into the removed temporary folder: on Windows that
+ * value is put back as it was before (`installLocationRestores`).
  *
  * @template T
  * @param {string} installer
@@ -115,6 +118,7 @@ export async function withInstalled(installer, body, { exe, prefix = 'tauri-app-
   // which compares unequal to the paths the installed processes report.
   const temp = await realpath(await mkdtemp(join(tmpdir(), prefix)))
   const target = join(temp, 'app')
+  const before = process.platform === 'win32' ? softwareKeys() : null
   try {
     run(installer, nsisArgs(target), 'installing')
     if (exe && !(await readdir(target)).some((f) => f.toLowerCase() === exe.toLowerCase())) {
@@ -122,7 +126,79 @@ export async function withInstalled(installer, body, { exe, prefix = 'tauri-app-
     }
     return await body(target)
   } finally {
-    await uninstall(target, { exe }).finally(() => rm(temp, { recursive: true, force: true }))
+    await uninstall(target, { exe })
+      .finally(() => before && restoreInstallLocation(before, target))
+      .finally(() => rm(temp, { recursive: true, force: true }))
+  }
+}
+
+/**
+ * The keys one and two levels under `HKCU\Software` with their default value, as `powershell`
+ * lists them: one line per key, `path<TAB>1<TAB>value` for a key with a default value and
+ * `path<TAB>0<TAB>` for one without. Keyed by the path in lower case.
+ *
+ * @param {string} text
+ * @returns {Map<string, { path: string, value: string | null }>}
+ */
+export function parseSoftwareKeys(text) {
+  const keys = new Map()
+  for (const line of text.split(/\r?\n/)) {
+    const [path, has, ...rest] = line.split('\t')
+    if (!path || (has !== '0' && has !== '1')) continue
+    keys.set(path.toLowerCase(), { path, value: has === '1' ? rest.join('\t') : null })
+  }
+  return keys
+}
+
+/** Every key one and two levels under `HKCU\Software`, with its default value (`parseSoftwareKeys`). Windows only. */
+export function softwareKeys() {
+  const command = [
+    "Get-ChildItem HKCU:\\Software -ErrorAction SilentlyContinue",
+    "ForEach-Object { $_; Get-ChildItem $_.PSPath -ErrorAction SilentlyContinue }",
+    "ForEach-Object { $v = $_.GetValue(''); $p = $_.Name.Substring('HKEY_CURRENT_USER\\'.Length); if ($null -eq $v) { \"$p`t0`t\" } else { \"$p`t1`t$v\" } }",
+  ].join(' | ')
+  return parseSoftwareKeys(powershell(command))
+}
+
+const sameFolder = (a, b) => a.replace(/[\\/]+$/, '').toLowerCase() === b.replace(/[\\/]+$/, '').toLowerCase()
+
+/**
+ * What to put back after installing into `target`: each key whose default value the install set to
+ * `target`, with how to leave it as it was in `before` — `set` it to the value it held, `clear` the
+ * default value of a key that had none, or `remove` a key that was not there.
+ *
+ * @param {Map<string, { path: string, value: string | null }>} before
+ * @param {Map<string, { path: string, value: string | null }>} after
+ * @param {string} target
+ * @returns {{ path: string, action: 'set' | 'clear' | 'remove', value?: string }[]}
+ */
+export function installLocationRestores(before, after, target) {
+  const restores = []
+  for (const [key, { path, value }] of after) {
+    if (value === null || !sameFolder(value, target)) continue
+    const was = before.get(key)
+    if (was?.value != null && sameFolder(was.value, target)) continue
+    if (!was) restores.push({ path, action: 'remove' })
+    else if (was.value === null) restores.push({ path, action: 'clear' })
+    else restores.push({ path, action: 'set', value: was.value })
+  }
+  return restores
+}
+
+/** The PowerShell command that carries out one restore. */
+export function restoreCommand({ path, action, value }) {
+  const key = quoted(`HKCU:\\${path}`)
+  if (action === 'remove') return `Remove-Item -LiteralPath ${key} -Recurse -Force`
+  if (action === 'clear') return `Remove-ItemProperty -LiteralPath ${key} -Name '(default)' -Force`
+  return `Set-Item -LiteralPath ${key} -Value ${quoted(value)}`
+}
+
+function restoreInstallLocation(before, target) {
+  for (const restore of installLocationRestores(before, softwareKeys(), target)) {
+    powershell(restoreCommand(restore))
+    if (restore.action === 'set' && !existsSync(restore.value)) {
+      console.warn(`HKCU\\${restore.path} pointed at ${restore.value} before this install, a folder that does not exist (left by another tool?); it is put back as it was — the next plain install of the product goes there`)
+    }
   }
 }
 

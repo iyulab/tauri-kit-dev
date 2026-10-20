@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `withInstalled` (and `walkUpdate`, which installs through it) no longer leaves the product's
+  install location pointing at the removed temporary folder. An NSIS installer records the folder it
+  installed into as the default value of `HKCU\Software\<maker>\<product>`, its uninstaller leaves
+  that value, and the next install without `/D` — a person's, or a release walk's — went into the
+  removed folder. The value is now put back as it was before the install (the value it held, no
+  value, or no key), and a value put back that names a folder that does not exist is warned about.
+  The pieces: `softwareKeys`, `parseSoftwareKeys`, `installLocationRestores`, `restoreCommand`.
+
 ## [0.11.0] - 2026-10-20
 
 ### Added

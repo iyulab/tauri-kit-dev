@@ -4,7 +4,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { nsisArgs, pickInstaller, pickReleaseInstaller, pickUpdateWalk, pickUpgradeFrom, profileSnapshots, readUpdateState, updateReady, withAppDataSetAside } from '../src/installer.js'
+import { installLocationRestores, nsisArgs, parseSoftwareKeys, pickInstaller, pickReleaseInstaller, pickUpdateWalk, pickUpgradeFrom, profileSnapshots, readUpdateState, restoreCommand, updateReady, withAppDataSetAside } from '../src/installer.js'
 
 test('an update walk goes from the release before the newest to the newest', () => {
   const releases = [
@@ -117,4 +117,41 @@ test('a folder left aside by an earlier check is not overwritten', async () => {
   await assert.rejects(withAppDataSetAside(appData, async () => (ran = true)), /left from an earlier check/)
   assert.equal(ran, false)
   await rm(base, { recursive: true, force: true })
+})
+
+test('the registry listing reads keys with and without a default value', () => {
+  const keys = parseSoftwareKeys('Software\\Maker\t0\t\r\nSoftware\\Maker\\App\t1\tC:\\Users\\u\\AppData\\Local\\App\nnot a line\nSoftware\\Tabs\t1\ta\tb\n')
+  assert.deepEqual([...keys], [
+    ['software\\maker', { path: 'Software\\Maker', value: null }],
+    ['software\\maker\\app', { path: 'Software\\Maker\\App', value: 'C:\\Users\\u\\AppData\\Local\\App' }],
+    ['software\\tabs', { path: 'Software\\Tabs', value: 'a\tb' }],
+  ])
+})
+
+test('an install location the install wrote into its temporary folder is put back as it was', () => {
+  const target = 'C:\\Temp\\tauri-app-installed-x\\app'
+  const listing = (lines) => parseSoftwareKeys(lines.join('\n'))
+  const before = listing([
+    'Software\\Maker\\Kept\t1\tC:\\Users\\u\\AppData\\Local\\Kept',
+    'Software\\Maker\\Bare\t0\t',
+    'Software\\Maker\\Other\t1\tD:\\Elsewhere',
+  ])
+  const after = listing([
+    'Software\\Maker\\Kept\t1\tc:\\temp\\tauri-app-installed-x\\app\\',
+    'Software\\Maker\\Bare\t1\t' + target,
+    'Software\\Maker\\New\t1\t' + target,
+    'Software\\Maker\\Other\t1\tD:\\Elsewhere',
+  ])
+  assert.deepEqual(installLocationRestores(before, after, target), [
+    { path: 'Software\\Maker\\Kept', action: 'set', value: 'C:\\Users\\u\\AppData\\Local\\Kept' },
+    { path: 'Software\\Maker\\Bare', action: 'clear' },
+    { path: 'Software\\Maker\\New', action: 'remove' },
+  ])
+  assert.deepEqual(installLocationRestores(after, after, target), [], 'a value that already held the folder is left')
+})
+
+test('each restore is one PowerShell command on the current user\'s key', () => {
+  assert.equal(restoreCommand({ path: 'Software\\Maker\\New', action: 'remove' }), "Remove-Item -LiteralPath 'HKCU:\\Software\\Maker\\New' -Recurse -Force")
+  assert.equal(restoreCommand({ path: 'Software\\Maker\\Bare', action: 'clear' }), "Remove-ItemProperty -LiteralPath 'HKCU:\\Software\\Maker\\Bare' -Name '(default)' -Force")
+  assert.equal(restoreCommand({ path: "Software\\O'Neil\\App", action: 'set', value: "C:\\It's" }), "Set-Item -LiteralPath 'HKCU:\\Software\\O''Neil\\App' -Value 'C:\\It''s'")
 })
