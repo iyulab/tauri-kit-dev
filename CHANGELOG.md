@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-20
+
 ### Added
 
 - `walkUpdate` (`installer`): walks the update an installed copy takes on its own — installs the
