@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-10-22
+
 ### Fixed
 
 - `withInstalled` (and `walkUpdate`, which installs through it) no longer leaves the product's
