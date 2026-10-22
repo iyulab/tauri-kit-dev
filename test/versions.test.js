@@ -82,3 +82,13 @@ test('a workspace manifest holds its version under [workspace.package]; a lock e
   writeFileSync(join(dir, 'Cargo.lock'), 'version = 4\n')
   assert.throws(() => checkVersions(['Cargo.lock'], (f) => join(dir, f)), /needs \{ package \}/)
 })
+
+test('a lock named for several crates has every one of them moved', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'versions-'))
+  const lock = 'version = 4\n\n[[package]]\nname = "core"\nversion = "0.1.0"\n\n[[package]]\nname = "core-ffi"\nversion = "0.1.0"\n'
+  writeFileSync(join(dir, 'Cargo.lock'), lock)
+  const files = [{ file: 'Cargo.lock', package: 'core' }, { file: 'Cargo.lock', package: 'core-ffi' }]
+  bumpVersions(files, '0.2.0', (f) => join(dir, f))
+  assert.equal(readFileSync(join(dir, 'Cargo.lock'), 'utf8'), lock.replaceAll('version = "0.1.0"', 'version = "0.2.0"'))
+  assert.equal(checkVersions(files, (f) => join(dir, f)).version, '0.2.0')
+})

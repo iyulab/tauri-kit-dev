@@ -171,14 +171,18 @@ export function checkVersions(files, resolvePath = (f) => f) {
  */
 export function bumpVersions(files, version, resolvePath = (f) => f) {
   if (!isVersion(version)) throw new Error(`"${version}" is not a version (major.minor.patch)`)
-  const planned = files.map(entryOf).map((entry) => {
+  // A file named by several entries — a Cargo lock holding several of the repository's crates — is written once,
+  // with every entry's places: written entry by entry, the last write would undo the others.
+  const planned = new Map()
+  for (const entry of files.map(entryOf)) {
     const path = resolvePath(entry.file)
-    const text = readFileSync(path, 'utf8')
-    const spans = spansOf(text, entry)
+    const plan = planned.get(path) ?? { path, text: readFileSync(path, 'utf8'), spans: [] }
+    const spans = spansOf(plan.text, entry)
     if (spans.length === 0) throw new Error(`${entry.file}: no version found — nothing written`)
-    return { path, text, spans }
-  })
-  for (const { path, text, spans } of planned) {
+    plan.spans.push(...spans)
+    planned.set(path, plan)
+  }
+  for (const { path, text, spans } of planned.values()) {
     let written = text
     for (const span of [...spans].sort((a, b) => b.from - a.from)) written = written.slice(0, span.from) + version + written.slice(span.to)
     writeFileSync(path, written)
