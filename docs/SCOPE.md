@@ -76,9 +76,11 @@ be handy is not enough; the need should come from building, testing or releasing
 domain. If the description needs "for X" to make sense, it is that caller's concern. Every
 constant it needs becomes a parameter; if the parameters are the whole tool, it is the caller's.
 
-**4. Would a second, unrelated app want it?** Not "could it be justified?" but "does the need
-arise naturally for someone else?" A tool already written separately by two apps answers this
-question; a hypothetical second app does not.
+**4. Is the shape general?** Read a request as one sample of every app that will hit the same
+cause, not as a count of who asked. The root cause, restated in this package's own terms, decides
+what to build: a tool that serves all of those apps, not the shape one caller wrote down. The
+number of callers is not the test — one request can show a need every Tauri app has, and apps that
+already wrote the same tool separately are evidence for the reading, not a gate it must pass.
 
 ### When the answer is no
 
@@ -87,5 +89,5 @@ the app, composed around what is here.
 
 ### When the answer is genuinely unclear
 
-Prefer the narrower reading. A tool withheld can be added once a second app shows the same need;
-a tool released becomes a contract.
+Find out before building: ask the caller what they were trying to do. A tool released becomes a
+contract, so the work goes into reading the need correctly — not into waiting for more callers.

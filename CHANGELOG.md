@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- `docs/SCOPE.md`: admission test 4 reads a request as a sample of every app with the same cause; the number of apps that asked is no longer the test, and an unclear case is settled by asking the caller rather than waiting for more callers.
+
 ## [0.11.1] - 2026-10-22
 
 ### Fixed
