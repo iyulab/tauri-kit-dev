@@ -67,6 +67,27 @@ line. The window has to carry the port in its own browser arguments, in one of t
   configuration) whose windows have `"additionalBrowserArgs"` with `--remote-debugging-port=<port>`
   and the same defaults. Launch with that port and `debugPortFromEnv: false`.
 
+### Another driver on the same window
+
+The debugging port takes more than one client, so a window `App.launch` started — the built app,
+not a dev server — can also be driven by another CDP client. `app.endpoint` is where its port
+answers; Playwright, for one, takes hold of it with `connectOverCDP`:
+
+```js
+import { chromium } from 'playwright-core'
+import { App } from '@iyulab/tauri-kit-dev/app'
+
+const app = await App.launch({ exe: 'src-tauri/target/debug/notes.exe', port: 9222 })
+const browser = await chromium.connectOverCDP(app.endpoint)
+const page = browser.contexts()[0].pages()[0]
+await page.getByRole('button', { name: 'New note' }).click()
+await browser.close() // lets go of the window; it does not end the app
+await app.quit()
+```
+
+`App`'s own helpers keep working beside the other driver, and `quit` is still what ends the app and
+waits for its web view to go.
+
 ## Running scenarios against the app
 
 ```js

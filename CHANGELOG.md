@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- `App.endpoint`: where the launched window's debugging port answers, for another CDP client to drive the same window — Playwright's `connectOverCDP`, for one (README, «Another driver on the same window»).
+
 ### Changed
 
 - `docs/SCOPE.md`: admission test 4 reads a request as a sample of every app with the same cause; the number of apps that asked is no longer the test, and an unclear case is settled by asking the caller rather than waiting for more callers.

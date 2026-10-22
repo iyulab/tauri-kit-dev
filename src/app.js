@@ -276,6 +276,15 @@ export class App {
     if (this.#options.webviewProfile) await webviewGone(this.#options.webviewProfile)
   }
 
+  /**
+   * Where the window's debugging port answers (`http://127.0.0.1:<port>`) — for another driver to take hold of the same
+   * window: Playwright's `chromium.connectOverCDP(app.endpoint)`, say. The port takes more than one client, so `App`'s
+   * own helpers keep working beside it; `quit` still ends the app.
+   */
+  get endpoint() {
+    return `http://127.0.0.1:${this.#options.port}`
+  }
+
   get #h() {
     return this.#options?.helpersName ?? '__e2e'
   }
