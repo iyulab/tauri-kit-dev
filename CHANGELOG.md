@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-23
+
 ### Added
 
 - `App.consoleMessages` · `App.consoleProblems()`: what the page said to its console and what the browser logged about it
