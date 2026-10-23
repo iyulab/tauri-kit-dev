@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
-import { App, webviewGone, debugEnv, debugPortDiagnosis, helpers, pictureName, runScenarios, selectScenarios } from '../src/app.js'
+import { App, consoleLine, consoleMessage, webviewGone, debugEnv, debugPortDiagnosis, helpers, pictureName, runScenarios, selectScenarios } from '../src/app.js'
 
 const names = ['open a folder', 'add a record', 'search', 'close']
 
@@ -276,4 +276,37 @@ test('a run that ends without quitting takes its window with it', async (t) => {
   for (let i = 0; i < 50 && alive(); i++) await new Promise((r) => setTimeout(r, 100))
   if (alive()) process.kill(pid)
   assert.equal(alive(), false)
+})
+
+test('a console call is one message: its arguments as printed, an assert as an error', () => {
+  assert.deepEqual(consoleMessage({ type: 'warning', args: [{ type: 'string', value: 'IPC failed' }, { type: 'object', description: 'TypeError: Failed to fetch' }] }), {
+    level: 'warning',
+    text: 'IPC failed TypeError: Failed to fetch',
+  })
+  assert.deepEqual(consoleMessage({ type: 'assert', args: [{ type: 'number', value: 0 }] }), { level: 'error', text: '0' })
+  assert.deepEqual(consoleMessage({ type: 'table', args: [{ type: 'undefined' }] }), { level: 'log', text: 'undefined' })
+})
+
+test('consoleProblems keeps the warnings and errors; a failure report says how many and the last few', () => {
+  const app = new App()
+  app.consoleMessages = [
+    { level: 'log', text: 'ready' },
+    { level: 'warning', text: 'first' },
+    { level: 'error', text: 'Refused to connect\nbecause of the policy', source: 'security' },
+    { level: 'info', text: 'fine' },
+  ]
+  assert.deepEqual(app.consoleProblems().map((m) => m.text), ['first', 'Refused to connect\nbecause of the policy'])
+  assert.equal(consoleLine(app), 'the page said 2 warnings or errors: warning: first · error: Refused to connect')
+  assert.equal(consoleLine(app, 1), 'the page said 2 warnings or errors, the last 1: error: Refused to connect')
+  assert.equal(consoleLine(new App()), '')
+})
+
+test('runScenarios adds what the page said to a failure', async () => {
+  const lines = []
+  const app = { child: {}, quit: async () => {}, consoleProblems: () => [{ level: 'warning', text: 'IPC custom protocol failed' }] }
+  await runScenarios(
+    { only: async () => { throw new Error('the list is empty') } },
+    { start: async () => ({ app }), argv: [], screenshots: undefined, log: (l) => lines.push(l) },
+  )
+  assert.match(lines.join('\n'), /✗ only\n {4}the list is empty\n {4}the page said one warning or error: warning: IPC custom protocol failed/)
 })

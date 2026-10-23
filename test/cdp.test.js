@@ -57,3 +57,43 @@ test('a command given a time fails once it is out; one given none keeps waiting'
   cdp.close()
   await assert.rejects(pending, /Page\.enable: the window's debugging connection closed/)
 })
+
+/** A debugging endpoint that sends `events` (CDP event messages) as soon as the connection is made. */
+async function speakingEndpoint(t, events) {
+  const { createHash } = await import('node:crypto')
+  const server = createServer()
+  const sockets = new Set()
+  server.on('upgrade', (req, socket) => {
+    sockets.add(socket)
+    const accept = createHash('sha1').update(`${req.headers['sec-websocket-key']}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest('base64')
+    socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`)
+    socket.on('error', () => {})
+    for (const event of events) {
+      const payload = Buffer.from(JSON.stringify(event))
+      // An unmasked text frame, as a server sends it (payloads here stay under 126 bytes).
+      socket.write(Buffer.concat([Buffer.from([0x81, payload.length]), payload]))
+    }
+  })
+  await new Promise((r) => server.listen(0, '127.0.0.1', r))
+  t.after(() => {
+    for (const socket of sockets) socket.destroy()
+    server.close()
+  })
+  return `ws://127.0.0.1:${server.address().port}/`
+}
+
+test('on hears the events of its method until it is stopped', async (t) => {
+  const heard = []
+  const url = await speakingEndpoint(t, [
+    { method: 'Log.entryAdded', params: { entry: { level: 'error', text: 'one' } } },
+    { method: 'Page.loadEventFired', params: {} },
+    { method: 'Log.entryAdded', params: { entry: { level: 'warning', text: 'two' } } },
+  ])
+  // Listening starts before the frames are read: they arrive on the connection's first turns of the event loop.
+  const cdp = await Cdp.connect(url)
+  t.after(() => cdp.close())
+  const stop = cdp.on('Log.entryAdded', ({ entry }) => heard.push(entry.text))
+  await new Promise((r) => setTimeout(r, 200))
+  stop()
+  assert.deepEqual(heard, ['one', 'two'])
+})

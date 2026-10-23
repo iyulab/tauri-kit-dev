@@ -39,6 +39,8 @@ export class Cdp {
   #ws
   #nextId = 1
   #pending = new Map()
+  /** @type {Map<string, Set<(params: any) => void>>} */
+  #listeners = new Map()
   #closed = false
 
   /** Connects to a target's `webSocketDebuggerUrl`. */
@@ -51,6 +53,11 @@ export class Cdp {
     })
     cdp.#ws.addEventListener('message', (event) => {
       const message = JSON.parse(event.data)
+      // An event the window sends of its own accord, not an answer.
+      if (message.id === undefined) {
+        for (const listener of cdp.#listeners.get(message.method) ?? []) listener(message.params)
+        return
+      }
       const pending = cdp.#pending.get(message.id)
       if (!pending) return
       cdp.#pending.delete(message.id)
@@ -85,6 +92,19 @@ export class Cdp {
       const settle = (fn) => (value) => (clearTimeout(timer), fn(value))
       this.#pending.set(id, { resolve: settle(resolve), reject: settle(reject), method })
     })
+  }
+
+  /**
+   * Calls `listener` with the parameters of each `method` event the window sends — `Runtime.consoleAPICalled`, say,
+   * once `Runtime.enable` has been sent. Answers a function that stops it.
+   *
+   * @param {string} method
+   * @param {(params: any) => void} listener
+   */
+  on(method, listener) {
+    const listeners = this.#listeners.get(method) ?? new Set()
+    this.#listeners.set(method, listeners.add(listener))
+    return () => listeners.delete(listener)
   }
 
   /** Evaluates `expression` in the page and returns its (awaited) value; `timeoutMs` as for `send`. */

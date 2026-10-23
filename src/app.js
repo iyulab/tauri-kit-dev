@@ -149,11 +149,33 @@ async function webviewCommandLines(platform = process.platform) {
   return stdout.split(/\r?\n/).filter(Boolean)
 }
 
+/**
+ * One thing the page said: `level` is the console's (`log`, `info`, `debug`, `warning`, `error`) or the browser log's
+ * (`verbose`, `info`, `warning`, `error`), `source` names the browser log's part (`network`, `security`, …) and is absent
+ * for the page's own console calls.
+ *
+ * @typedef {{ level: string, text: string, source?: string }} ConsoleMessage
+ */
+
+/** A console call as one message: its arguments as the console would print them, an `assert` as an error. */
+export function consoleMessage({ type, args = [] }) {
+  const level = type === 'assert' ? 'error' : ['warning', 'error', 'info', 'debug'].includes(type) ? type : 'log'
+  const text = args.map((a) => (a.value !== undefined ? String(a.value) : (a.description ?? a.type ?? ''))).join(' ')
+  return { level, text }
+}
+
 export class App {
   /** @type {import('node:child_process').ChildProcess | undefined} */
   child
   /** @type {Cdp} */
   cdp
+  /**
+   * What the page has said to its console, and what the browser logged about it (a refused request, a content security
+   * policy violation), since the window opened — in order, with what came before the window was connected to.
+   *
+   * @type {ConsoleMessage[]}
+   */
+  consoleMessages = []
   #options
 
   /**
@@ -199,6 +221,7 @@ export class App {
     try {
       const page = await Promise.race([findPage(port, { timeoutMs }), exited])
       app.cdp = await Cdp.connect(page.webSocketDebuggerUrl)
+      await app.#listen()
       await Promise.race([app.cdp.waitFor(ready, 'the window to be ready', { timeoutMs }), exited])
       await app.cdp.evaluate(helpers(helpersName))
     } catch (e) {
@@ -231,10 +254,24 @@ export class App {
     const next = await this.constructor.launch({ ...this.#options, env: { ...this.#options.env, ...env } })
     this.child = next.child
     this.cdp = next.cdp
+    this.consoleMessages = next.consoleMessages
     this.#stopEnding = next.#stopEnding
   }
 
   #stopEnding
+
+  /** The console messages and log entries at `warning` or `error` — what a page that works says none of. */
+  consoleProblems() {
+    return this.consoleMessages.filter((m) => m.level === 'warning' || m.level === 'error')
+  }
+
+  /** Collects the page's console and log into `consoleMessages`; enabling them hands over what was said before too. */
+  async #listen() {
+    this.cdp.on('Runtime.consoleAPICalled', (params) => this.consoleMessages.push(consoleMessage(params)))
+    this.cdp.on('Log.entryAdded', ({ entry }) => this.consoleMessages.push({ level: entry.level, text: entry.text, source: entry.source }))
+    await this.cdp.send('Runtime.enable')
+    await this.cdp.send('Log.enable')
+  }
 
   /** Ends `child` when this process exits or is interrupted, until `quit` ends it first. */
   #endWithProcess(child) {
@@ -450,6 +487,15 @@ export function pictureName(name) {
   return `${name.replace(/[^\p{L}\p{N}]+/gu, '-')}.png`
 }
 
+/** The page's warnings and errors in one line for a failure report: how many, and the last few. */
+export function consoleLine(app, last = 3) {
+  const problems = app.consoleProblems?.() ?? []
+  if (!problems.length) return ''
+  const shown = problems.slice(-last).map((m) => `${m.level}: ${m.text.split('\n')[0].slice(0, 200)}`)
+  const many = problems.length === 1 ? 'one warning or error' : `${problems.length} warnings or errors`
+  return `the page said ${many}${problems.length > last ? `, the last ${last}` : ''}: ${shown.join(' · ')}`
+}
+
 /** How long what a failure gathers — what the window showed, its picture — may take. */
 const AFTER_FAILURE_MS = 15_000
 
@@ -515,7 +561,8 @@ export async function runScenarios(scenarios, {
         } catch (e) {
           // A window that stopped answering would hold these too: each gets a moment, then is let go.
           const said = shown && run.app.child ? await within(gathering, shown(run.app)).catch(() => '') : ''
-          log(`  ✗ ${name}\n    ${String(e.message).replaceAll('\n', '\n    ')}${said ? `\n    the window showed: ${said}` : ''}`)
+          const problems = consoleLine(run.app)
+          log(`  ✗ ${name}\n    ${String(e.message).replaceAll('\n', '\n    ')}${said ? `\n    the window showed: ${said}` : ''}${problems ? `\n    ${problems}` : ''}`)
           const kept = await within(gathering, picture(run.app, `FAILED ${name}`, screenshots ?? failures)).catch(() => undefined)
           if (kept) log(`    picture: ${kept}`)
           return name

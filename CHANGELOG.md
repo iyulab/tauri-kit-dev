@@ -4,6 +4,12 @@
 
 ### Added
 
+- `App.consoleMessages` · `App.consoleProblems()`: what the page said to its console and what the browser logged about it
+  (a refused request, a content security policy violation), from the window's start — the warnings and errors are added
+  to a failure report. A Tauri window whose calls to the app cannot reach `http://ipc.localhost` goes on working through
+  a fallback with a warning for each call, which a scenario can now hold the page to not saying (README, «What the page
+  said»).
+- `Cdp.on(method, listener)`: hears the events the window sends once their domain is enabled.
 - `App.endpoint`: where the launched window's debugging port answers, for another CDP client to drive the same window — Playwright's `connectOverCDP`, for one (README, «Another driver on the same window»).
 
 ### Changed

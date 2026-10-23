@@ -34,6 +34,9 @@ cdp.close()
 `portAnswers(port)` tells whether something is already listening — a window left over from an
 earlier run would otherwise answer in place of the one just started.
 
+`cdp.on(method, listener)` hears the events the window sends — once their domain is enabled
+(`await cdp.send('Log.enable')`) — and answers a function that stops listening.
+
 ### Opening the debugging port
 
 `App.launch` passes the port in `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` (`debugEnv`). Current WebView2
@@ -121,6 +124,23 @@ measurements; `--repeat <n>` runs that many times, each from a fresh start — f
 fails only sometimes. `E2E_SCREENSHOTS=<dir>` saves a picture after each scenario. A failure's
 picture is kept either way — in that folder, or else in a new one under the temp folder (the
 `failures` option) — and the run says where.
+
+### What the page said
+
+`App` collects what the page says to its console, and what the browser logs about it — a request
+refused, a content security policy violation — in `app.consoleMessages` (`{ level, text, source? }`,
+in order, with what was said before the window was connected to). `app.consoleProblems()` is the
+part at `warning` or `error`. A failure report adds its last few after what the window showed. Some
+faults show nowhere else: a Tauri window whose calls to the app cannot reach `http://ipc.localhost`
+— refused by its content security policy, which needs `connect-src ipc: http://ipc.localhost`, or
+by a request filter — falls back to another channel and goes on working, with one warning for each
+call. A scenario can hold the page to having said none:
+
+```js
+'says nothing wrong at start': async (app) => {
+  assert.deepEqual(app.consoleProblems(), [])
+},
+```
 
 A scenario that has not finished after five minutes (the `scenarioTimeoutMs` option) fails with
 `did not finish within <n> s`, and the run goes on to quit the window: a step with no deadline of
