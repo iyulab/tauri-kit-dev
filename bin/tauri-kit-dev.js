@@ -65,6 +65,13 @@
 //   sandbox <installer> --exe <file> [--identifier <id>] [--extra <script>] [--without-webview2] [--prepare]
 //       Installs and starts the app in Windows Sandbox with networking off. --prepare only lays out
 //       the folder and the .wsb file. Exits 1 when the run did not pass.
+//
+//   visual <before-dir> <after-dir> [--tolerance <0-255>] [--out <dir>]
+//       Compares the PNG screenshots of two folders by name, pixel by pixel (a channel moving by more
+//       than --tolerance, default 16, is a change). Says first how many pictures it could compare.
+//       --out writes a <name>.diff.png per changed picture (changed pixels in magenta) and
+//       summary.json. Exits 1 when a picture changed, changed size, could not be read or is in only
+//       one folder; 2 when no picture is in both.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, relative, resolve } from 'node:path'
@@ -78,6 +85,7 @@ import { checkRepo, loadConfig } from '../src/public-text.js'
 import { bumpVersions, checkVersions } from '../src/versions.js'
 import { formatTelemetry, readTelemetry } from '../src/telemetry.js'
 import { runInSandbox } from '../src/sandbox.js'
+import { compareFolders, formatComparison } from '../src/visual.js'
 
 const USAGE = `usage: tauri-kit-dev gate --config <file> [--list] [--only a,b] [--skip c] [--<flag>]
        tauri-kit-dev pin-drift [--props <file> --project <file> --publisher <name> [--properties <Name=Value;…>]] [--npm <package.json>] [--cargo <Cargo.toml>] [--repository <pattern>] [--max-minor-gap <n>] [--waivers <file>]
@@ -87,7 +95,8 @@ const USAGE = `usage: tauri-kit-dev gate --config <file> [--list] [--only a,b] [
        tauri-kit-dev telemetry --app <resource> --resource-group <group> [--days <n>] [--version <x.y.z>]
        tauri-kit-dev versions --config <file> [--bump <x.y.z>]
        tauri-kit-dev machine [--dotnet]
-       tauri-kit-dev sandbox <installer> --exe <file> [--identifier <id>] [--extra <script>] [--without-webview2] [--prepare]`
+       tauri-kit-dev sandbox <installer> --exe <file> [--identifier <id>] [--extra <script>] [--without-webview2] [--prepare]
+       tauri-kit-dev visual <before-dir> <after-dir> [--tolerance <0-255>] [--out <dir>]`
 
 async function gate(argv) {
   const at = argv.indexOf('--config')
@@ -327,7 +336,27 @@ ${USAGE}`)
   return 0
 }
 
-const commands = { gate, notices, 'notice-pins': noticePins, 'pin-drift': pinDrift, 'public-text': publicText, telemetry, versions, machine, sandbox }
+async function visual(argv) {
+  const args = parseArgs(argv, { options: ['--tolerance', '--out'] })
+  if (args.positional.length !== 2) throw new Error(`visual needs <before-dir> <after-dir>
+${USAGE}`)
+  const [before, after] = args.positional
+  const toleranceText = args.options['--tolerance'] ?? '16'
+  const tolerance = Number.parseInt(toleranceText, 10)
+  if (String(tolerance) !== toleranceText) throw new Error(`--tolerance must be a whole number 0–255 — got "${toleranceText}"`)
+  const out = args.options['--out']
+  const run = compareFolders(before, after, { tolerance, out })
+  for (const line of formatComparison(run)) console.log(line)
+  if (out) console.log(`\nWritten to ${out}`)
+  if (run.common === 0) {
+    console.error('\nNo picture is in both folders — nothing was compared.')
+    return 2
+  }
+  const changed = run.verdicts.some((v) => v.kind !== 'identical') || run.onlyBefore.length + run.onlyAfter.length > 0
+  return changed ? 1 : 0
+}
+
+const commands = { gate, notices, 'notice-pins': noticePins, 'pin-drift': pinDrift, 'public-text': publicText, telemetry, versions, machine, sandbox, visual }
 
 async function main([command, ...rest]) {
   const run = commands[command]

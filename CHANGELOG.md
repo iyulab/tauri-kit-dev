@@ -4,6 +4,12 @@
 
 ### Added
 
+- `tauri-kit-dev visual <before-dir> <after-dir>` and `@iyulab/tauri-kit-dev/visual`: compares the PNG screenshots of
+  two folders by name, pixel by pixel, and says first how many pictures it could compare (a changed size or an
+  unreadable file is named, not counted as compared). `--out` writes a diff picture per change — the newer picture
+  dimmed, changed pixels in magenta — and `summary.json`. No dependency: PNG is read and written with `node:zlib`, and
+  the reader is checked against a Chromium-encoded fixture read by an independent decoder (README, «Comparing pictures
+  between runs»).
 - `pressButton(pid, name)` · `pressButtonWhenShown(pid, name)` (`/installer`): presses a button in a process's main
   window through Windows UI Automation, which reads a web view's page as it reads native controls — no debugging port,
   so it works on a release build. `walkUpdate({ install: ({ pid }) => pressButtonWhenShown(pid, 'Install now') })` walks
