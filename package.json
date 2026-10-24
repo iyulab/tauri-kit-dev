@@ -36,7 +36,8 @@
     "./registry-drift": "./src/registry-drift.js",
     "./sandbox": "./src/sandbox.js",
     "./telemetry": "./src/telemetry.js",
-    "./versions": "./src/versions.js"
+    "./versions": "./src/versions.js",
+    "./visual": "./src/visual.js"
   },
   "bin": {
     "tauri-kit-dev": "./bin/tauri-kit-dev.js"

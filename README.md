@@ -189,6 +189,34 @@ ended before the app starts (`endLeftovers`, Windows): only those names, and one
 `readDiscovery` reads a helper's discovery file — `{ port, … }`, as tauri-kit's `DiscoveryFile` writes it — as soon as it
 is there and whole.
 
+### Comparing pictures between runs
+
+```sh
+npx tauri-kit-dev visual <before-dir> <after-dir> [--tolerance <0-255>] [--out <dir>]
+```
+
+Compares the PNG pictures two runs saved (`E2E_SCREENSHOTS`, say) by name, pixel by pixel. A pixel
+counts as changed when a channel moves by more than `--tolerance` (default 16) — font smoothing and
+compositing move a few levels between otherwise identical renders. It says first how many pictures
+were in both folders and how many it could compare: a picture whose size changed, or one it cannot
+read, is named and left out of the count rather than passed. `--out` writes `<name>.diff.png` for
+each changed picture — the newer one dimmed, the changed pixels in magenta — and `summary.json`.
+Exits 1 when a picture changed, changed size, could not be read or is in only one folder; 2 when
+no picture is in both.
+
+Which folder is the baseline, and when it is replaced, is the app's to decide. The same comparison
+as functions:
+
+```js
+import { compareFolders, comparePair, formatComparison } from '@iyulab/tauri-kit-dev/visual'
+
+const run = compareFolders('baseline', 'screenshots', { tolerance: 16, out: 'visual-diff' })
+console.log(formatComparison(run).join('\n')) // run.common, run.compared, run.verdicts (most changed first)
+```
+
+PNG is read and written with `node:zlib` — the 8-bit RGB and RGBA, non-interlaced files a browser
+screenshot is; anything else is reported as unreadable, by its reason.
+
 ## Checking the installer
 
 ```js

@@ -18,7 +18,8 @@ one reasonable-looking commit at a time, until the tools served every caller bad
 bundled into an app or runs on a user's computer as part of one. Within that:
 
 - **Driving the window** — a Chrome DevTools Protocol client for the WebView2 window (or any
-  Chromium page with a debugging port), and the launch, wait, screenshot and teardown around it
+  Chromium page with a debugging port), and the launch, wait, screenshot and teardown around it —
+  and comparing those screenshots with an earlier run's
 - **Checking an installer** — installing silently into a temporary folder, starting what was
   installed, installing over a published version, installing on a clean machine (Windows
   Sandbox), uninstalling
