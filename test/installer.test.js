@@ -4,7 +4,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { installLocationRestores, nsisArgs, parseSoftwareKeys, pickInstaller, pickReleaseInstaller, pickUpdateWalk, pickUpgradeFrom, profileSnapshots, readUpdateState, restoreCommand, updateReady, withAppDataSetAside } from '../src/installer.js'
+import { installLocationRestores, nsisArgs, parseSoftwareKeys, pickInstaller, pickReleaseInstaller, pickUpdateWalk, pickUpgradeFrom, pressButton, pressButtonWhenShown, profileSnapshots, readUpdateState, restoreCommand, updateReady, withAppDataSetAside } from '../src/installer.js'
 
 test('an update walk goes from the release before the newest to the newest', () => {
   const releases = [
@@ -154,4 +154,10 @@ test('each restore is one PowerShell command on the current user\'s key', () => 
   assert.equal(restoreCommand({ path: 'Software\\Maker\\New', action: 'remove' }), "Remove-Item -LiteralPath 'HKCU:\\Software\\Maker\\New' -Recurse -Force")
   assert.equal(restoreCommand({ path: 'Software\\Maker\\Bare', action: 'clear' }), "Remove-ItemProperty -LiteralPath 'HKCU:\\Software\\Maker\\Bare' -Name '(default)' -Force")
   assert.equal(restoreCommand({ path: "Software\\O'Neil\\App", action: 'set', value: "C:\\It's" }), "Set-Item -LiteralPath 'HKCU:\\Software\\O''Neil\\App' -Value 'C:\\It''s'")
+})
+
+test('a button is pressed only in a window that has it', { skip: process.platform !== 'win32' }, async () => {
+  // This test's own process has no main window: nothing to press, and waiting for it says so.
+  assert.equal(pressButton(process.pid, 'Install now'), false)
+  await assert.rejects(pressButtonWhenShown(process.pid, 'Install now', { timeoutMs: 1 }), /no button named "Install now"/)
 })

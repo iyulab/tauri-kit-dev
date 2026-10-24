@@ -236,8 +236,21 @@ const { from, to, steps } = await withAppDataSetAside(data, () =>
 )
 ```
 
-`install` starts the update another way (an app that installs when asked), and `restarts: true`
-expects the installer to start the app again.
+`install` starts the update another way, and `restarts: true` expects the installer to start the app
+again. An app that installs only when the person says so shows a button for it; `pressButtonWhenShown`
+waits for that button in the app's window and presses it through Windows UI Automation, which reads
+the web view's page as it reads native controls — no debugging port, so it works on the release build
+being walked:
+
+```js
+import { pressButtonWhenShown, walkUpdate } from '@iyulab/tauri-kit-dev/installer'
+
+walkUpdate({
+  // …as above
+  install: ({ pid }) => pressButtonWhenShown(pid, 'Install now'), // the button's accessible name
+  restarts: true,
+})
+```
 
 An installed copy keeps its data where the person's own copy does (`%LOCALAPPDATA%\<identifier>`),
 and `startsAndStays` ends it by force. Wrap a check in `withAppDataSetAside` so whatever the app writes

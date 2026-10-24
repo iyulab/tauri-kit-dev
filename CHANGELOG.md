@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Added
+
+- `pressButton(pid, name)` · `pressButtonWhenShown(pid, name)` (`/installer`): presses a button in a process's main
+  window through Windows UI Automation, which reads a web view's page as it reads native controls — no debugging port,
+  so it works on a release build. `walkUpdate({ install: ({ pid }) => pressButtonWhenShown(pid, 'Install now') })` walks
+  the update of an app that installs only when the person says so (README, «Checking the installer»).
+
 ## [0.12.0] - 2026-10-23
 
 ### Added

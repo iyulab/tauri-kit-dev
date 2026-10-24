@@ -344,6 +344,39 @@ export function closeMainWindow(pid) {
   powershell(`(Get-Process -Id ${Number(pid)} -ErrorAction SilentlyContinue).CloseMainWindow() | Out-Null`)
 }
 
+/**
+ * Presses the button named `name` in a process's main window, as a person clicking it would — through
+ * Windows UI Automation, which reads the page of a web view as it reads native controls, so it needs
+ * no debugging port and works on a release build. Answers whether it was pressed: the window and the
+ * button must be there.
+ */
+export function pressButton(pid, name) {
+  const script = [
+    'Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes',
+    `$handle = (Get-Process -Id ${Number(pid)} -ErrorAction SilentlyContinue).MainWindowHandle`,
+    "if (-not $handle -or $handle -eq 0) { 'no window'; exit }",
+    '$a = [System.Windows.Automation.AutomationElement]',
+    '$button = New-Object System.Windows.Automation.AndCondition(',
+    '  (New-Object System.Windows.Automation.PropertyCondition($a::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)),',
+    `  (New-Object System.Windows.Automation.PropertyCondition($a::NameProperty, ${quoted(name)})))`,
+    '$found = $a::FromHandle($handle).FindFirst([System.Windows.Automation.TreeScope]::Descendants, $button)',
+    "if (-not $found) { 'no button'; exit }",
+    '$found.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()',
+    "'pressed'",
+  ].join('\n')
+  return powershell(script) === 'pressed'
+}
+
+/**
+ * Waits until the button named `name` is in a process's main window and presses it — the `install`
+ * of `walkUpdate` for an app that installs when the person says so.
+ */
+export async function pressButtonWhenShown(pid, name, { timeoutMs = 60_000 } = {}) {
+  if (!(await until(() => pressButton(pid, name), timeoutMs, 1000))) {
+    throw new Error(`no button named ${JSON.stringify(name)} in the window of process ${pid} within ${timeoutMs} ms`)
+  }
+}
+
 async function until(what, timeoutMs, everyMs = 1000) {
   const end = Date.now() + timeoutMs
   for (;;) {
