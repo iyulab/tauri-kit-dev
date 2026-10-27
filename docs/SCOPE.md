@@ -21,7 +21,9 @@ bundled into an app or runs on a user's computer as part of one. Within that:
   Chromium page with a debugging port), and the launch, wait, screenshot and teardown around it
 - **Checking an installer** — installing silently into a temporary folder, starting what was
   installed, installing over a published version, installing on a clean machine (Windows
-  Sandbox), uninstalling
+  Sandbox), uninstalling. This checks how the installed app *behaves*; what the installer *is* —
+  its signature and publisher — is checked by the release workflow's verify step
+  (`tauri-release`'s `actions/verify`), which this tool does not repeat
 - **Checking the build machine** — the toolchain and runtime prerequisites a Tauri build or a
   bundled helper process needs, checked before a long build rather than discovered during it
 - **Checking public text** — finding text a public repository must not carry, against a list the
