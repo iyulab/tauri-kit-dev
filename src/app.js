@@ -4,6 +4,7 @@
 // app's to say.
 
 import { spawn, spawnSync } from 'node:child_process'
+import { appendFileSync, mkdtempSync, readFileSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
@@ -157,6 +158,54 @@ async function webviewCommandLines(platform = process.platform) {
  * @typedef {{ level: string, text: string, source?: string }} ConsoleMessage
  */
 
+/**
+ * The environment variable that names a run's dialog answers file — read by the app's dialog route
+ * (`tauri-kit-dialog`, built with its `test-answers` feature).
+ */
+export const DIALOG_ANSWERS = 'TAURI_KIT_DIALOG_ANSWERS'
+
+/**
+ * An answer to a dialog the app will open: where to save, the file or files to open, the folder, or none.
+ *
+ * @typedef {{ kind: 'save', path: string } | { kind: 'open', paths: string[] } | { kind: 'folder', path: string } | { kind: 'cancel' }} DialogAnswer
+ */
+
+/** Appends `answers` to the answers file, one JSON line each, after checking their shape. */
+export function appendDialogAnswers(file, answers) {
+  const lines = answers.map((answer) => {
+    const { kind } = answer ?? {}
+    const ok =
+      (kind === 'save' || kind === 'folder') ? typeof answer.path === 'string' && Object.keys(answer).length === 2
+        : kind === 'open' ? Array.isArray(answer.paths) && answer.paths.length > 0 && answer.paths.every((p) => typeof p === 'string') && Object.keys(answer).length === 2
+          : kind === 'cancel' ? Object.keys(answer).length === 1
+            : false
+    if (!ok) throw new Error(`not a dialog answer: ${JSON.stringify(answer)} — { kind: 'save' | 'folder', path } · { kind: 'open', paths: [...] } · { kind: 'cancel' }`)
+    return `${JSON.stringify(answer)}\n`
+  })
+  appendFileSync(file, lines.join(''))
+}
+
+/**
+ * The dialogs the app asked, in order, from the log beside the answers file: `{ kind, title, defaultPath, filters }`,
+ * `kind` one of `save`, `open`, `open-many`, `folder`. A last line cut short by a crash is left out.
+ */
+export function readAskedDialogs(file) {
+  let text
+  try {
+    text = readFileSync(`${file}.asked`, 'utf8')
+  } catch (e) {
+    if (e.code === 'ENOENT') return []
+    throw e
+  }
+  return text.split('\n').filter((l) => l.trim()).flatMap((l) => {
+    try {
+      return [JSON.parse(l)]
+    } catch {
+      return []
+    }
+  })
+}
+
 /** A console call as one message: its arguments as the console would print them, an `assert` as an error. */
 export function consoleMessage({ type, args = [] }) {
   const level = type === 'assert' ? 'error' : ['warning', 'error', 'info', 'debug'].includes(type) ? type : 'log'
@@ -176,6 +225,12 @@ export class App {
    * @type {ConsoleMessage[]}
    */
   consoleMessages = []
+  /**
+   * The file the app's dialog route takes answers from in this run (`DIALOG_ANSWERS`) — see `answerDialogs`.
+   *
+   * @type {string}
+   */
+  dialogAnswers
   #options
 
   /**
@@ -205,7 +260,10 @@ export class App {
     // `this`: an app's own subclass launches as itself.
     const app = new this()
     app.#options = options
-    const environment = { ...process.env, ...(debugPortFromEnv ? debugEnv(port) : {}), ...env }
+    // Each run gets a dialog answers file of its own unless one is given: a dialog the test did not answer is an error in
+    // the app, never a window nobody sees (with an app whose dialog route reads it — `tauri-kit-dialog`).
+    app.dialogAnswers = env[DIALOG_ANSWERS] ?? join(mkdtempSync(join(tmpdir(), 'tauri-kit-dev-dialogs-')), 'answers.jsonl')
+    const environment = { ...process.env, ...(debugPortFromEnv ? debugEnv(port) : {}), ...env, [DIALOG_ANSWERS]: app.dialogAnswers }
     // A development command (`tauri dev`) runs through a shell, in its own process group where there is one, so `quit`
     // ends everything it started — the dev server, the build, the app — and not only the shell.
     app.child = options.command
@@ -251,7 +309,8 @@ export class App {
   /** Ends the app the hard way and starts it again in this same App, with `env` added. */
   async restart(env = {}) {
     await this.quit()
-    const next = await this.constructor.launch({ ...this.#options, env: { ...this.#options.env, ...env } })
+    // The same answers file: the answers left over are the next ones, and what was asked stays in its log.
+    const next = await this.constructor.launch({ ...this.#options, env: { ...this.#options.env, [DIALOG_ANSWERS]: this.dialogAnswers, ...env } })
     this.child = next.child
     this.cdp = next.cdp
     this.consoleMessages = next.consoleMessages
@@ -259,6 +318,24 @@ export class App {
   }
 
   #stopEnding
+
+  /**
+   * Answers the next dialogs the app opens, in order — appended to those not taken yet, so it may be called while the
+   * app runs, before the step that opens the dialog. Each is `{ kind: 'save', path }`, `{ kind: 'open', paths: [...] }`
+   * (one path for a dialog that opens one file), `{ kind: 'folder', path }` or `{ kind: 'cancel' }`. The app's dialog route
+   * (`tauri-kit-dialog`, built with `test-answers`) takes them; a dialog of another kind than its answer, or one with no
+   * answer left, fails in the app.
+   *
+   * @param {DialogAnswer[]} answers
+   */
+  answerDialogs(answers) {
+    appendDialogAnswers(this.dialogAnswers, answers)
+  }
+
+  /** The dialogs the app has asked so far: `{ kind, title, defaultPath, filters: [{ name, extensions }] }` each. */
+  askedDialogs() {
+    return readAskedDialogs(this.dialogAnswers)
+  }
 
   /** The console messages and log entries at `warning` or `error` — what a page that works says none of. */
   consoleProblems() {

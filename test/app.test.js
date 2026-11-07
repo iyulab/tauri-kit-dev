@@ -1,7 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
-import { App, consoleLine, consoleMessage, webviewGone, debugEnv, debugPortDiagnosis, helpers, pictureName, runScenarios, selectScenarios } from '../src/app.js'
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { App, appendDialogAnswers, consoleLine, consoleMessage, readAskedDialogs, webviewGone, debugEnv, debugPortDiagnosis, helpers, pictureName, runScenarios, selectScenarios } from '../src/app.js'
 
 const names = ['open a folder', 'add a record', 'search', 'close']
 
@@ -309,4 +312,34 @@ test('runScenarios adds what the page said to a failure', async () => {
     { start: async () => ({ app }), argv: [], screenshots: undefined, log: (l) => lines.push(l) },
   )
   assert.match(lines.join('\n'), /✗ only\n {4}the list is empty\n {4}the page said one warning or error: warning: IPC custom protocol failed/)
+})
+
+const dialogDir = () => mkdtempSync(join(tmpdir(), 'dialog-answers-'))
+
+test('appends answers as JSON lines, taken in turn by the app', () => {
+  const file = join(dialogDir(), 'answers.jsonl')
+  appendDialogAnswers(file, [{ kind: 'save', path: '/out/report.csv' }, { kind: 'cancel' }])
+  appendDialogAnswers(file, [{ kind: 'open', paths: ['/a.txt'] }, { kind: 'folder', path: '/vault' }])
+  assert.deepEqual(readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l)), [
+    { kind: 'save', path: '/out/report.csv' },
+    { kind: 'cancel' },
+    { kind: 'open', paths: ['/a.txt'] },
+    { kind: 'folder', path: '/vault' },
+  ])
+})
+
+test('refuses an answer the app could not read, and writes none of the call', () => {
+  const file = join(dialogDir(), 'answers.jsonl')
+  for (const bad of [{ kind: 'save' }, { kind: 'open', paths: [] }, { kind: 'open', path: '/a' }, { kind: 'pick' }, { kind: 'cancel', path: '/x' }, null]) {
+    assert.throws(() => appendDialogAnswers(file, [{ kind: 'cancel' }, bad]), /not a dialog answer/)
+  }
+  assert.equal(existsSync(file), false)
+})
+
+test('reads what the app asked, leaving out a line cut short', () => {
+  const d = dialogDir()
+  const file = join(d, 'answers.jsonl')
+  assert.deepEqual(readAskedDialogs(file), [])
+  writeFileSync(`${file}.asked`, '{"kind":"save","title":"Export","defaultPath":"report.csv","filters":[]}\n{"kind":"fol')
+  assert.deepEqual(readAskedDialogs(file), [{ kind: 'save', title: 'Export', defaultPath: 'report.csv', filters: [] }])
 })

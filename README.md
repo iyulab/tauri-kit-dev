@@ -91,6 +91,24 @@ await app.quit()
 `App`'s own helpers keep working beside the other driver, and `quit` is still what ends the app and
 waits for its web view to go.
 
+### Native open and save dialogs
+
+A native dialog belongs to the operating system: the page cannot reach it, and a run with nobody at the
+screen stops there. An app that opens its dialogs through [`tauri-kit-dialog`](https://github.com/iyulab/tauri-kit)'s
+`answer_or`, built with that crate's `test-answers` feature for its test builds, takes their answers from a file
+instead. `App.launch` gives each run such a file (`TAURI_KIT_DIALOG_ANSWERS` — `app.dialogAnswers`; `restart` keeps
+it), and the test fills it before the step that opens the dialog:
+
+```js
+app.answerDialogs([{ kind: 'save', path: join(out, 'report.csv') }])
+await app.click('button', 'Export')
+assert.deepEqual(app.askedDialogs().at(-1), { kind: 'save', title: 'Export', defaultPath: 'report.csv', filters: [{ name: 'CSV', extensions: ['csv'] }] })
+```
+
+Answers are taken in order: `{ kind: 'save', path }`, `{ kind: 'open', paths: [...] }` (one path for a dialog
+that opens one file), `{ kind: 'folder', path }`, `{ kind: 'cancel' }`. A dialog with no answer left, or with an
+answer of another kind, fails in the app rather than showing a window — the test sees it in what the app reports.
+
 ## Running scenarios against the app
 
 ```js
