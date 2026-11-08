@@ -4,6 +4,10 @@
 
 ### Added
 
+- `versions` reads `CHANGELOG.md` (Keep a Changelog): its version is the newest release heading, and `--bump` releases the
+  `Unreleased` section under a new heading in the same style — dated when the earlier ones are — moving the compare links at
+  the foot when the file keeps them. A changelog with nothing unreleased stops the bump before any file is written.
+  `bumpVersions` takes `{ date }`.
 - `App.answerDialogs(answers)` · `App.askedDialogs()` · `app.dialogAnswers`: answers the native open and save dialogs of an
   app whose dialogs go through `tauri-kit-dialog` built with its `test-answers` feature. `App.launch` gives each run an answers
   file (`TAURI_KIT_DIALOG_ANSWERS`, kept across `restart`); answers are appended in order and checked for shape, and what the

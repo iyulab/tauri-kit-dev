@@ -51,9 +51,10 @@
 //
 //   versions --config <file> [--bump <x.y.z>]
 //       Checks that every file an app writes its version in holds the same one — Cargo.toml, its
-//       Cargo.lock entry, tauri.conf.json, package.json and its lock, a .NET project — and with
-//       --bump writes the new one into all of them, each in place (nothing is written when one of
-//       them holds no version to find). --config names a module exporting { files } — paths relative
+//       Cargo.lock entry, tauri.conf.json, package.json and its lock, a .NET project, the newest
+//       release of CHANGELOG.md — and with --bump writes the new one into all of them, each in place
+//       (a changelog's Unreleased section released under a dated heading; nothing is written when one
+//       of them holds no version to find, or the changelog nothing unreleased). --config names a module exporting { files } — paths relative
 //       to the module's folder, a Cargo lock as { file, package } — see src/versions.js. Exits 1
 //       when they disagree.
 //

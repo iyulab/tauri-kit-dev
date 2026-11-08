@@ -8,7 +8,10 @@
 //   - `Cargo.lock`: the `version` of the `[[package]]` named `package` (the entry needs it — a lock holds every crate);
 //   - a JSON file (`tauri.conf.json`, `package.json`): its top-level `version`;
 //   - `package-lock.json`: its top-level `version` and that of the root package (`packages[""]`);
-//   - a .NET project or props file (`.csproj`, `.props`): its first `<Version>`.
+//   - a .NET project or props file (`.csproj`, `.props`): its first `<Version>`;
+//   - a changelog (`CHANGELOG.md`, Keep a Changelog): the version of its newest release heading. A bump does not
+//     rewrite that heading — it releases the `Unreleased` section under a new heading in the same style, and moves
+//     the compare links at the foot when the file keeps them.
 // Each is rewritten in place, its other text untouched.
 
 import { readFileSync, writeFileSync } from 'node:fs'
@@ -39,7 +42,8 @@ function kindOf(file) {
   if (name === 'package-lock.json') return 'npm-lock'
   if (extname(name) === '.json') return 'json'
   if (['.csproj', '.fsproj', '.vbproj', '.props'].includes(extname(name))) return 'msbuild'
-  throw new Error(`${file}: not a file whose version this knows how to read (Cargo.toml, Cargo.lock, *.json, package-lock.json, *.csproj, *.props)`)
+  if (name === 'changelog.md') return 'changelog'
+  throw new Error(`${file}: not a file whose version this knows how to read (Cargo.toml, Cargo.lock, *.json, package-lock.json, *.csproj, *.props, CHANGELOG.md)`)
 }
 
 /**
@@ -120,6 +124,51 @@ function jsonSpans(text, lock) {
   return spans
 }
 
+const UNRELEASED = /^##[ \t]+(\[?)Unreleased\]?[ \t]*$/im
+const RELEASE = /^##[ \t]+\[?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)\]?(?:[ \t]+[-–—][ \t]+(\d{4}-\d{2}-\d{2}))?[ \t]*$/m
+
+/** The span of a changelog's newest release version, in its heading. */
+function changelogSpan(text) {
+  const heading = RELEASE.exec(text)
+  if (!heading) return null
+  const from = heading.index + heading[0].indexOf(heading[1])
+  return { from, to: from + heading[1].length }
+}
+
+/**
+ * The edits that release a changelog's `Unreleased` section as `version` on `date`: a new heading under the
+ * `Unreleased` one, in the style of the newest release heading (brackets, a date), and — when the file keeps compare
+ * links — `[Unreleased]` moved on from the new version and a link for it. Throws when there is no `Unreleased`
+ * section, or nothing in it.
+ */
+function changelogEdits(text, file, version, date) {
+  const unreleased = UNRELEASED.exec(text)
+  if (!unreleased) throw new Error(`${file}: no "## [Unreleased]" section to release — nothing written`)
+  const bodyFrom = unreleased.index + unreleased[0].length
+  const next = /^##[ \t]/m.exec(text.slice(bodyFrom))
+  const body = text.slice(bodyFrom, next ? bodyFrom + next.index : text.length)
+  // Compare links at the foot are not entries.
+  if (body.replace(/^\[[^\]]+\]:.*$/gm, '').trim() === '') {
+    throw new Error(`${file}: the Unreleased section is empty — nothing to release, nothing written`)
+  }
+  const newest = RELEASE.exec(text)
+  const bracketed = newest ? newest[0].includes('[') : unreleased[1] === '['
+  const dated = newest ? newest[2] !== undefined : true
+  const heading = `## ${bracketed ? `[${version}]` : version}${dated ? ` - ${date}` : ''}`
+  const edits = [{ from: bodyFrom, to: bodyFrom, text: `\n\n${heading}` }]
+  const link = /^\[Unreleased\]:[ \t]*(\S*?)v?(\d+\.\d+\.\d+[^.\s]*)\.\.\.HEAD[ \t]*$/im.exec(text)
+  if (link) {
+    const [line, base, previous] = link
+    const tag = line.includes(`v${previous}...`) ? 'v' : ''
+    edits.push({
+      from: link.index,
+      to: link.index + line.length,
+      text: `[Unreleased]: ${base}${tag}${version}...HEAD\n[${version}]: ${base}${tag}${previous}...${tag}${version}`,
+    })
+  }
+  return edits
+}
+
 /** The spans of a file's version, by its kind. @param {{ file: string, package?: string }} entry */
 function spansOf(text, entry) {
   switch (kindOf(entry.file)) {
@@ -141,6 +190,10 @@ function spansOf(text, entry) {
       if (!tag) return []
       const from = tag.index + '<Version>'.length
       return [{ from, to: from + tag[1].length }]
+    }
+    case 'changelog': {
+      const span = changelogSpan(text)
+      return span ? [span] : []
     }
   }
 }
@@ -165,26 +218,39 @@ export function checkVersions(files, resolvePath = (f) => f) {
 }
 
 /**
- * Writes `version` into every file, each in place. Every file is read and its places found before any is written, so
- * a file whose version cannot be found leaves them all as they were.
+ * Writes `version` into every file, each in place — a changelog's Unreleased section released under it, dated `date`
+ * (today, local time, when left out). Every file is read and its places found before any is written, so a file whose
+ * version cannot be found — or a changelog with nothing unreleased — leaves them all as they were.
  * @param {VersionFile[]} files @param {string} version @param {(file: string) => string} [resolvePath]
+ * @param {{ date?: string }} [options]
  */
-export function bumpVersions(files, version, resolvePath = (f) => f) {
+export function bumpVersions(files, version, resolvePath = (f) => f, { date = today() } = {}) {
   if (!isVersion(version)) throw new Error(`"${version}" is not a version (major.minor.patch)`)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error(`"${date}" is not a date (YYYY-MM-DD)`)
   // A file named by several entries — a Cargo lock holding several of the repository's crates — is written once,
   // with every entry's places: written entry by entry, the last write would undo the others.
   const planned = new Map()
   for (const entry of files.map(entryOf)) {
     const path = resolvePath(entry.file)
-    const plan = planned.get(path) ?? { path, text: readFileSync(path, 'utf8'), spans: [] }
-    const spans = spansOf(plan.text, entry)
-    if (spans.length === 0) throw new Error(`${entry.file}: no version found — nothing written`)
-    plan.spans.push(...spans)
+    const plan = planned.get(path) ?? { path, text: readFileSync(path, 'utf8'), edits: [] }
+    if (kindOf(entry.file) === 'changelog') {
+      plan.edits.push(...changelogEdits(plan.text, entry.file, version, date))
+    } else {
+      const spans = spansOf(plan.text, entry)
+      if (spans.length === 0) throw new Error(`${entry.file}: no version found — nothing written`)
+      plan.edits.push(...spans.map((span) => ({ ...span, text: version })))
+    }
     planned.set(path, plan)
   }
-  for (const { path, text, spans } of planned.values()) {
+  for (const { path, text, edits } of planned.values()) {
     let written = text
-    for (const span of [...spans].sort((a, b) => b.from - a.from)) written = written.slice(0, span.from) + version + written.slice(span.to)
+    for (const edit of [...edits].sort((a, b) => b.from - a.from)) written = written.slice(0, edit.from) + edit.text + written.slice(edit.to)
     writeFileSync(path, written)
   }
+}
+
+function today() {
+  const now = new Date()
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
 }

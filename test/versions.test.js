@@ -92,3 +92,52 @@ test('a lock named for several crates has every one of them moved', () => {
   assert.equal(readFileSync(join(dir, 'Cargo.lock'), 'utf8'), lock.replaceAll('version = "0.1.0"', 'version = "0.2.0"'))
   assert.equal(checkVersions(files, (f) => join(dir, f)).version, '0.2.0')
 })
+
+/** A Keep a Changelog file with an Unreleased section, its newest release at `version`. */
+function changelog(dir, version, { unreleased = '### Added\n\n- A thing.\n', links = true } = {}) {
+  const foot = links
+    ? `\n[Unreleased]: https://github.com/acme/notes/compare/v${version}...HEAD\n[${version}]: https://github.com/acme/notes/compare/v0.1.0...v${version}\n`
+    : ''
+  writeFileSync(
+    join(dir, 'CHANGELOG.md'),
+    `# Changelog\n\n## [Unreleased]\n\n${unreleased}\n## [${version}] - 2026-10-01\n\n### Fixed\n\n- An old thing.\n${foot}`,
+  )
+}
+
+test('a changelog holds the version of its newest release heading', () => {
+  const { files, at, dir } = app('0.2.0')
+  changelog(dir, '0.2.0')
+  const report = checkVersions([...files, 'CHANGELOG.md'], at)
+  assert.equal(report.agree, true)
+  assert.equal(report.found.at(-1).version, '0.2.0')
+})
+
+test('a bump releases the Unreleased section under a dated heading and moves the compare links', () => {
+  const { files, at, dir, read } = app('0.2.0')
+  changelog(dir, '0.2.0')
+  bumpVersions([...files, 'CHANGELOG.md'], '0.3.0', at, { date: '2026-11-09' })
+  assert.equal(checkVersions([...files, 'CHANGELOG.md'], at).version, '0.3.0')
+  assert.equal(
+    read('CHANGELOG.md'),
+    '# Changelog\n\n## [Unreleased]\n\n## [0.3.0] - 2026-11-09\n\n### Added\n\n- A thing.\n\n## [0.2.0] - 2026-10-01\n\n### Fixed\n\n- An old thing.\n\n' +
+      '[Unreleased]: https://github.com/acme/notes/compare/v0.3.0...HEAD\n' +
+      '[0.3.0]: https://github.com/acme/notes/compare/v0.2.0...v0.3.0\n' +
+      '[0.2.0]: https://github.com/acme/notes/compare/v0.1.0...v0.2.0\n',
+  )
+})
+
+test('a changelog without compare links, or with plain headings, keeps its style', () => {
+  const { dir, at, read } = app('0.2.0')
+  writeFileSync(join(dir, 'CHANGELOG.md'), '# Changelog\n\n## Unreleased\n\n- New.\n\n## 0.2.0\n\n- Old.\n')
+  bumpVersions(['CHANGELOG.md'], '0.2.1', at, { date: '2026-11-09' })
+  assert.equal(read('CHANGELOG.md'), '# Changelog\n\n## Unreleased\n\n## 0.2.1\n\n- New.\n\n## 0.2.0\n\n- Old.\n')
+})
+
+test('nothing is written when the changelog has nothing unreleased', () => {
+  const { files, at, dir, read } = app('0.2.0')
+  changelog(dir, '0.2.0', { unreleased: '' })
+  const before = read('Cargo.toml')
+  assert.throws(() => bumpVersions([...files, 'CHANGELOG.md'], '0.3.0', at, { date: '2026-11-09' }), /Unreleased section is empty/)
+  assert.equal(read('Cargo.toml'), before)
+  assert.equal(checkVersions(files, at).version, '0.2.0')
+})
