@@ -385,7 +385,8 @@ npx tauri-kit-dev public-text [--config <file>] [--history] [<repo>...]
 ```
 
 Checks each git repository (default: the current one) — tracked files, and the messages of
-commits not yet pushed — for local paths and private hosts. `--history` also reads every commit
+commits not yet pushed — for local paths, private hosts and text encoded twice (UTF-8 read as Latin-1
+or Windows-1252 and written back, so that a dash reads as three letters). `--history` also reads every commit
 message, every line any commit ever added and tag messages: old versions of files stay readable
 once a repository is public.
 

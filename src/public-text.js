@@ -30,6 +30,9 @@ import { resolve } from 'node:path'
 export const DEFAULT_RULES = [
   { why: 'local path', re: /\b[A-Za-z]:[\\/]Users[\\/]|(?:^|[\s'"`(=])\/(?:home|Users)\/[^/\s]+\// },
   { why: 'private host', re: /\b10\.\d{1,3}\.\d{1,3}\.\d{1,3}\b|\b192\.168\.\d{1,3}\.\d{1,3}\b|\b172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}\b|\.(?:internal)\b/ },
+  // UTF-8 read as Latin-1 or Windows-1252 and written back: a dash becomes three letters. A C1 control character is
+  // never meant, and the pairs that start every encoded-twice dash, quote and accented letter seldom are.
+  { why: 'encoded twice', re: /[\u0080-\u009f]|\u00e2\u20ac|\u00c3[\u0080-\u00bf\u2018-\u201e\u2020-\u2022\u2026\u2030\u2039\u203a\u20ac\u2122]|\u00c2[\u00a0-\u00bf]/ },
 ]
 
 /**

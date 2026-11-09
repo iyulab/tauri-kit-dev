@@ -19,6 +19,20 @@ test('local paths and private hosts are found by default', () => {
   assert.deepEqual(whys(`db.corp.${'inter' + 'nal'}`), ['private host'])
 })
 
+test('text encoded twice is found', () => {
+  // Each built from the UTF-8 bytes of a character read back one byte per character.
+  const twice = (text, decode) => [...Buffer.from(text, 'utf8')].map(decode).join('')
+  const latin1 = (b) => String.fromCharCode(b)
+  const cp1252 = (b) => new TextDecoder('windows-1252').decode(Uint8Array.of(b))
+  for (const text of ['a dash \u2014 here', 'caf\u00e9', '\u201cquoted\u201d', '\u00a0nbsp']) {
+    assert.deepEqual(whys(twice(text, latin1)), ['encoded twice'], `latin-1: ${text}`)
+    assert.deepEqual(whys(twice(text, cp1252)), ['encoded twice'], `cp1252: ${text}`)
+  }
+  for (const line of ['a dash \u2014 here', 'caf\u00e9 cr\u00e8me', 'S\u00e3o Paulo', '\u00ab quoted \u00bb \u00b7 \u00a9 2026', '\u00c9cole \u00c0 bient\u00f4t']) {
+    assert.deepEqual(scan(line), [], line)
+  }
+})
+
 test('ordinary text is left alone', () => {
   for (const line of ['see /usr/local/bin', 'version 10.0.26100', 'import x from "./home/page.js"', 'C:\\Windows\\System32']) {
     assert.deepEqual(scan(line), [], line)

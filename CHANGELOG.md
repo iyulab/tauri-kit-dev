@@ -13,6 +13,9 @@
   file (`TAURI_KIT_DIALOG_ANSWERS`, kept across `restart`); answers are appended in order and checked for shape, and what the
   app asked is read back from the log beside the file (README, «Native open and save dialogs»). `appendDialogAnswers` ·
   `readAskedDialogs` · `DIALOG_ANSWERS` are exported for a driver of its own.
+- `public-text` finds text encoded twice by default — UTF-8 read as Latin-1 or Windows-1252 and written back, where a
+  dash becomes three letters and an accented letter two: C1 control characters, and the pairs that start such sequences
+  (`DEFAULT_RULES`, `why: 'encoded twice'`). A repository that has such a line in a tracked file now fails the check.
 
 ## [0.13.0] - 2026-11-07
 
