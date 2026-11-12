@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Changed
+
+- `public-text` reads the committed text of every tracked file through one `git cat-file --batch` instead of starting `git show`
+  once per file. The findings are the same, and the check no longer grows with one process per file — which is what made it
+  slow on Windows, where starting a process costs most. A submodule entry is no longer reported by git as a bad object on the way.
+
 ### Added
 
 - `versions` reads `CHANGELOG.md` (Keep a Changelog): its version is the newest release heading, and `--bump` releases the

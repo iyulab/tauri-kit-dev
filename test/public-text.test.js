@@ -103,6 +103,22 @@ test('a file whose path holds characters outside ASCII is checked too', (t) => {
   assert.deepEqual(found.map((f) => f.where), ['nötes 日記.md:1'])
 })
 
+test('what is read is the committed text of each file, not the working tree', (t) => {
+  const repo = mkdtempSync(join(tmpdir(), 'public-text-'))
+  t.after(() => rmSync(repo, { recursive: true, force: true }))
+  const git = (...args) => execFileSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { encoding: 'utf8' })
+  git('init', '-q')
+  for (let i = 0; i < 40; i++) writeFileSync(join(repo, `f${i}.txt`), `${'é'.repeat(i)}\nline ${i}${i === 17 ? ' secret-project' : ''}\n`)
+  writeFileSync(join(repo, 'empty.txt'), '')
+  git('add', '.')
+  git('commit', '-qm', 'files')
+  writeFileSync(join(repo, 'f17.txt'), 'clean in the working tree only\n')
+  writeFileSync(join(repo, 'staged.txt'), 'secret-project, staged and not committed\n')
+  git('add', 'staged.txt')
+  const found = checkRepo(repo, { config: { forbidden: [{ why: 'name', re: /\bsecret-project\b/ }] } })
+  assert.deepEqual(found.map((f) => f.where), ['f17.txt:2'])
+})
+
 test('a line marked as allowed, on itself or just above, is left alone', (t) => {
   const repo = mkdtempSync(join(tmpdir(), 'public-text-'))
   t.after(() => rmSync(repo, { recursive: true, force: true }))

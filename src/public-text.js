@@ -91,14 +91,7 @@ export function checkRepo(repo, { config = {}, history = false } = {}) {
   const isAllowed = (file, text) => allowed.some((a) => `${file}:${text}`.includes(a))
   const findings = []
 
-  // NUL-separated: git otherwise quotes a path holding characters outside ASCII, and the quoted form names no file.
-  for (const file of git(repo, ['ls-files', '-z']).split('\0').filter((f) => f && !binary.test(f))) {
-    let text
-    try {
-      text = git(repo, ['show', `HEAD:${file}`])
-    } catch {
-      continue // listed but not committed yet
-    }
+  for (const [file, text] of committedTexts(repo, binary)) {
     const lines = text.split(/\r?\n/)
     for (const f of scan(text, rules)) {
       if (!isAllowed(file, f.text) && !markedAllowed(lines, f.line - 1)) findings.push({ where: `${file}:${f.line}`, why: f.why, text: f.text })
@@ -131,6 +124,50 @@ export function checkRepo(repo, { config = {}, history = false } = {}) {
 
   if (history) findings.push(...addedLines(repo, rules, binary, isAllowed), ...tagMessages(repo, rules))
   return findings
+}
+
+/**
+ * The committed text of every tracked file, as `[file, text]` in `ls-files` order — read through one
+ * `git cat-file --batch` rather than a process per file, which on Windows made the check take minutes
+ * in a repository of a few thousand files. A file listed but not committed yet is left out.
+ *
+ * @param {string} repo
+ * @param {RegExp} binary
+ * @returns {[string, string][]}
+ */
+function committedTexts(repo, binary) {
+  // NUL-separated: git otherwise quotes a path holding characters outside ASCII, and the quoted form names no file.
+  const listed = git(repo, ['ls-files', '-z']).split('\0').filter((f) => f && !binary.test(f))
+  /** @type {Map<string, string>} */
+  const blobs = new Map()
+  let tree = ''
+  try {
+    tree = git(repo, ['ls-tree', '-r', '-z', '--full-tree', 'HEAD'])
+  } catch {
+    return [] // no commit yet
+  }
+  for (const entry of tree.split('\0')) {
+    const tab = entry.indexOf('\t')
+    if (tab < 0) continue
+    const [, type, oid] = entry.slice(0, tab).split(' ')
+    if (type === 'blob') blobs.set(entry.slice(tab + 1), oid)
+  }
+  const files = listed.filter((f) => blobs.has(f))
+  if (files.length === 0) return []
+  const out = execFileSync('git', ['-C', repo, 'cat-file', '--batch'], {
+    input: files.map((f) => blobs.get(f)).join('\n') + '\n',
+    maxBuffer: 1024 * 1024 * 1024,
+  })
+  /** @type {[string, string][]} */
+  const texts = []
+  let at = 0
+  for (const file of files) {
+    const eol = out.indexOf(0x0a, at)
+    const size = Number(out.toString('latin1', at, eol).split(' ')[2])
+    texts.push([file, out.toString('utf8', eol + 1, eol + 1 + size)])
+    at = eol + 1 + size + 1
+  }
+  return texts
 }
 
 /** Every line a commit reachable from any ref added, reported once, at the first commit seen. */
