@@ -14,11 +14,14 @@
 //   --skip c          run all but these steps
 //   --<flag>          run the steps that opt in with this flag
 //
+// A failed step's last lines are printed again just above the summary, so the reason survives a
+// reader (or a script) that keeps only the end of the output.
+//
 // `preflight` lets the app refuse to start when it can see a step will fail for a reason the step's
 // own output would not name — a running debug build holding the executable the build must replace,
 // say. It gets the selected steps and returns a message to stop with, or nothing.
 
-import { spawnSync } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 import { resolve } from 'node:path'
 
@@ -26,8 +29,64 @@ import { resolve } from 'node:path'
  * @typedef {{ name: string, cmd: string, local?: boolean, optIn?: string }} Step
  * @typedef {{ list: boolean, only: string[] | null, skip: string[], flags: Set<string> }} GateArgs
  * @typedef {{ steps: Step[], preflight?: (selected: Step[]) => string | void | undefined }} GateConfig
- * @typedef {Step & { ok: boolean, seconds: number }} StepResult
+ * @typedef {Step & { ok: boolean, seconds: number, tail?: string[] }} StepResult
+ * @typedef {boolean | { ok: boolean, tail?: string[] }} RunOutcome
  */
+
+/** How many of a failed step's last lines are printed again above the summary. */
+export const FAILED_TAIL_LINES = 40
+
+/**
+ * Keeps the last `limit` lines of text that arrives in pieces.
+ *
+ * @param {number} limit
+ */
+export function lineTail(limit) {
+  /** @type {string[]} */
+  const lines = []
+  let partial = ''
+  return {
+    /** @param {string} chunk */
+    push(chunk) {
+      const parts = (partial + chunk).split(/\r?\n/)
+      partial = parts.pop() ?? ''
+      lines.push(...parts)
+      if (lines.length > limit) lines.splice(0, lines.length - limit)
+    },
+    /** @returns {string[]} */
+    lines() {
+      const all = partial ? [...lines, partial] : [...lines]
+      return all.slice(-limit)
+    },
+  }
+}
+
+/**
+ * Runs one step's command in a shell, its output shown as it comes and its last lines kept.
+ *
+ * @param {string} cmd
+ * @param {string} cwd
+ * @returns {Promise<{ ok: boolean, tail: string[] }>}
+ */
+export function runShown(cmd, cwd) {
+  return new Promise((done) => {
+    const tail = lineTail(FAILED_TAIL_LINES)
+    const child = spawn(cmd, { cwd, shell: true, stdio: ['inherit', 'pipe', 'pipe'] })
+    child.stdout.on('data', (b) => {
+      process.stdout.write(b)
+      tail.push(b.toString())
+    })
+    child.stderr.on('data', (b) => {
+      process.stderr.write(b)
+      tail.push(b.toString())
+    })
+    child.on('error', (e) => {
+      tail.push(`${e.message}\n`)
+      done({ ok: false, tail: tail.lines() })
+    })
+    child.on('close', (code) => done({ ok: code === 0, tail: tail.lines() }))
+  })
+}
 
 /**
  * Reads the gate's own arguments. The opt-in flags are whatever the steps name; anything else
@@ -94,22 +153,31 @@ export function summary(results) {
 }
 
 /**
- * Runs the gate and returns the exit code: 0 all green, 1 something failed, 2 it did not start
+ * What each failed step last printed, to follow the summary. @param {StepResult[]} results
+ */
+export function failedTails(results) {
+  return results
+    .filter((r) => !r.ok && r.tail?.length)
+    .flatMap((r) => [`[gate] ── ${r.name} failed; its last ${r.tail.length} line(s):`, ...r.tail.map((l) => `  | ${l}`)])
+}
+
+/**
+ * Runs the gate and resolves to the exit code: 0 all green, 1 something failed, 2 it did not start
  * (bad arguments, or `preflight` refused).
  *
  * @param {GateConfig & {
  *   argv?: string[], cwd?: string,
- *   run?: (cmd: string, cwd: string) => boolean,
+ *   run?: (cmd: string, cwd: string) => RunOutcome | Promise<RunOutcome>,
  *   log?: (line: string) => void, error?: (line: string) => void,
  *   now?: () => number,
  * }} options
  */
-export function runGate({
+export async function runGate({
   steps,
   preflight,
   argv = [],
   cwd = process.cwd(),
-  run = (cmd, dir) => spawnSync(cmd, { cwd: dir, stdio: 'inherit', shell: true }).status === 0,
+  run = runShown,
   log = console.log,
   error = console.error,
   now = Date.now,
@@ -136,10 +204,14 @@ export function runGate({
   for (const step of selected) {
     log(`\n[gate] ── ${step.name}: ${step.cmd}`)
     const started = now()
-    const ok = run(step.cmd, cwd)
-    results.push({ ...step, ok, seconds: (now() - started) / 1000 })
+    const outcome = await run(step.cmd, cwd)
+    const { ok, tail } = typeof outcome === 'boolean' ? { ok: outcome, tail: undefined } : outcome
+    results.push({ ...step, ok, tail, seconds: (now() - started) / 1000 })
   }
   const { lines, ok } = summary(results)
+  const tails = failedTails(results)
+  if (tails.length) log('')
+  for (const line of tails) log(line)
   log('\n[gate] summary')
   for (const line of lines) log(line.startsWith('  ') ? line : `[gate] ${line}`)
   return ok ? 0 : 1

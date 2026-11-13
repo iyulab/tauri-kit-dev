@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { gateArgs, listing, runGate, selectSteps, summary } from '../src/gate.js'
+import { gateArgs, lineTail, listing, runGate, runShown, selectSteps, summary } from '../src/gate.js'
 
 const STEPS = [
   { name: 'assemble', cmd: 'make helpers', optIn: '--ship' },
@@ -54,10 +54,10 @@ function quiet() {
   return { out, log: (l) => out.push(l), error: (l) => out.push(l) }
 }
 
-test('every selected step runs even after one fails, and the exit code says so', () => {
+test('every selected step runs even after one fails, and the exit code says so', async () => {
   const ran = []
   const io = quiet()
-  const code = runGate({
+  const code = await runGate({
     steps: STEPS,
     run: (cmd) => {
       ran.push(cmd)
@@ -71,16 +71,16 @@ test('every selected step runs even after one fails, and the exit code says so',
   assert.ok(io.out.includes('[gate] 1 failed: lint'))
 })
 
-test('all green is exit 0', () => {
+test('all green is exit 0', async () => {
   const io = quiet()
-  assert.equal(runGate({ steps: STEPS, run: () => true, now: () => 0, ...io }), 0)
+  assert.equal(await runGate({ steps: STEPS, run: () => true, now: () => 0, ...io }), 0)
   assert.ok(io.out.includes('[gate] all green'))
 })
 
-test('preflight can refuse before anything runs, seeing what was selected', () => {
+test('preflight can refuse before anything runs, seeing what was selected', async () => {
   let seen
   const io = quiet()
-  const code = runGate({
+  const code = await runGate({
     steps: STEPS,
     argv: ['--only', 'clippy'],
     preflight: (selected) => {
@@ -95,13 +95,43 @@ test('preflight can refuse before anything runs, seeing what was selected', () =
   assert.ok(io.out.includes('[gate] the debug build is running'))
 })
 
-test('bad arguments do not start the gate', () => {
+test('bad arguments do not start the gate', async () => {
   const io = quiet()
-  assert.equal(runGate({ steps: STEPS, argv: ['--onyl', 'x'], run: () => assert.fail('nothing runs'), ...io }), 2)
+  assert.equal(await runGate({ steps: STEPS, argv: ['--onyl', 'x'], run: () => assert.fail('nothing runs'), ...io }), 2)
 })
 
-test('--list prints the steps and runs nothing', () => {
+test('--list prints the steps and runs nothing', async () => {
   const io = quiet()
-  assert.equal(runGate({ steps: STEPS, argv: ['--list'], run: () => assert.fail('nothing runs'), ...io }), 0)
+  assert.equal(await runGate({ steps: STEPS, argv: ['--list'], run: () => assert.fail('nothing runs'), ...io }), 0)
   assert.equal(io.out.length, STEPS.length)
+})
+
+test("a failed step's last lines come again just above the summary; a passing step's do not", async () => {
+  const io = quiet()
+  const code = await runGate({
+    steps: STEPS,
+    run: (cmd) => (cmd === 'npm test' ? { ok: false, tail: ['1 passing', 'Error: expected 2, got 3'] } : { ok: true, tail: ['fine'] }),
+    now: () => 0,
+    ...io,
+  })
+  assert.equal(code, 1)
+  const at = io.out.indexOf('[gate] ── test failed; its last 2 line(s):')
+  assert.ok(at > 0)
+  assert.equal(io.out[at + 2], '  | Error: expected 2, got 3')
+  assert.ok(io.out.indexOf('\n[gate] summary') > at, 'the summary still comes last')
+  assert.ok(!io.out.some((l) => l.includes('| fine')))
+})
+
+test('lineTail keeps the last lines of text that arrives in pieces', () => {
+  const t = lineTail(2)
+  t.push('one\ntw')
+  t.push('o\r\nthree\nfou')
+  assert.deepEqual(t.lines(), ['three', 'fou'])
+})
+
+test('runShown reports the exit and keeps what the command printed', async () => {
+  const failed = await runShown('node -e "console.log(\'a\'); console.error(\'b\'); process.exit(3)"', process.cwd())
+  assert.equal(failed.ok, false)
+  assert.deepEqual(failed.tail.sort(), ['a', 'b'])
+  assert.equal((await runShown('node -e "0"', process.cwd())).ok, true)
 })

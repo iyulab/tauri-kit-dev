@@ -4,6 +4,13 @@
 
 ### Changed
 
+- `gate`: a failed step's last 40 lines are printed again just above the summary, so the reason a step failed survives a
+  reader or a script that keeps only the end of the output. Steps' output still appears as it comes; it now passes through
+  the runner (a pipe, not the terminal itself), so a tool that draws progress only on a terminal draws none.
+  **Breaking for the library entry point**: `runGate` returns a `Promise` of the exit code (await it), and a custom `run` may
+  return `{ ok, tail }` (or a promise of it) as well as a boolean. `runShown`, `lineTail`, `failedTails` and
+  `FAILED_TAIL_LINES` are exported. The `tauri-kit-dev gate` command is unchanged to call.
+
 - `public-text` reads the committed text of every tracked file through one `git cat-file --batch` instead of starting `git show`
   once per file. The findings are the same, and the check no longer grows with one process per file — which is what made it
   slow on Windows, where starting a process costs most. A submodule entry is no longer reported by git as a bad object on the way.
