@@ -160,6 +160,24 @@ call. A scenario can hold the page to having said none:
 },
 ```
 
+### What the app wrote
+
+The page's console reaches a run through the debugging port; what a Rust shell or a sidecar writes to its standard
+output and error does not, and is thrown away unless asked for. `launch({ …, captureOutput: true })` collects it:
+`app.output()` is the lines in the order they arrived, `{ stream: 'stdout' | 'stderr', text }` each, and
+`app.output('stderr')` only one of them. The two are separate pipes, so the order between a line of each is not exact.
+The kit gathers lines and judges none — what counts as a problem is the scenario's:
+
+```js
+'logs nothing wrong at start': async (app) => {
+  assert.ok(app.output().length > 0, 'the app logged nothing — the log may not be reaching this run')
+  assert.deepEqual(app.output('stderr').filter((l) => /\b(ERROR|PANIC)\b/.test(l.text)), [])
+},
+```
+
+Asking for the count first keeps «no errors» from meaning «nothing was captured». A start that fails — the window never
+opens, or the app exits first — adds the last lines it wrote to the error. `restart` keeps what the new start writes.
+
 A scenario that has not finished after five minutes (the `scenarioTimeoutMs` option) fails with
 `did not finish within <n> s`, and the run goes on to quit the window: a step with no deadline of
 its own — a protocol command a window that stopped answering never answers — cannot hold the run

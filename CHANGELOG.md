@@ -17,6 +17,13 @@
 
 ### Added
 
+- `launch({ captureOutput: true })` · `App.output(stream?)`: collects what the app writes to its standard output and error,
+  a line at a time (`{ stream, text }`, in the order they arrived; a line break ends a line, a last line with none is
+  kept), for a run that has to say how much the app logged and at what level — the page's console reaches a run through
+  the debugging port, a Rust shell's or a sidecar's log lines do not. Off by default, where the output is thrown away as
+  before. A start that fails (the window never opens, the app exits first) adds the last lines the app wrote to its error,
+  the first place to look when a window does not come up (README, «What the app wrote»).
+
 - `versions` reads `CHANGELOG.md` (Keep a Changelog): its version is the newest release heading, and `--bump` releases the
   `Unreleased` section under a new heading in the same style — dated when the earlier ones are — moving the compare links at
   the foot when the file keeps them. A changelog with nothing unreleased stops the bump before any file is written.

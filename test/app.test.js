@@ -4,7 +4,7 @@ import { createServer } from 'node:http'
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { App, appendDialogAnswers, consoleLine, consoleMessage, readAskedDialogs, webviewGone, debugEnv, debugPortDiagnosis, helpers, pictureName, runScenarios, selectScenarios } from '../src/app.js'
+import { App, appendDialogAnswers, captureOutput, collectLines, consoleLine, consoleMessage, outputLine, readAskedDialogs, webviewGone, debugEnv, debugPortDiagnosis, helpers, pictureName, runScenarios, selectScenarios } from '../src/app.js'
 
 const names = ['open a folder', 'add a record', 'search', 'close']
 
@@ -342,4 +342,74 @@ test('reads what the app asked, leaving out a line cut short', () => {
   assert.deepEqual(readAskedDialogs(file), [])
   writeFileSync(`${file}.asked`, '{"kind":"save","title":"Export","defaultPath":"report.csv","filters":[]}\n{"kind":"fol')
   assert.deepEqual(readAskedDialogs(file), [{ kind: 'save', title: 'Export', defaultPath: 'report.csv', filters: [] }])
+})
+
+// Line breaks are built, not typed as escapes: this file is edited through tools that turn an escape into a real break.
+const LF = String.fromCharCode(10)
+const CR = String.fromCharCode(13)
+
+test('lines are collected whole, whatever the chunks cut; the last one needs no line break', () => {
+  const into = []
+  const out = collectLines('stdout', into)
+  out.write(`first${CR}${LF}sec`)
+  out.write(`ond${LF}${LF}thi`)
+  out.write(`rd${CR}`)
+  out.write(`${LF}progress 10%${CR}progress 20%`)
+  assert.deepEqual(into.map((l) => l.text), ['first', 'second', '', 'third'])
+  out.end()
+  assert.deepEqual(into.at(-1), { stream: 'stdout', text: `progress 10%${CR}progress 20%` })
+  out.end()
+  assert.equal(into.length, 5, 'ending twice adds nothing')
+})
+
+test('what a real process writes is collected by stream, a multi-byte letter cut between chunks included', async () => {
+  const { spawn } = await import('node:child_process')
+  // The bytes of one letter go out in separate writes, a moment apart.
+  const script = [
+    `const wait = (ms) => new Promise((r) => setTimeout(r, ms))`,
+    `const lf = String.fromCharCode(10)`,
+    `const bytes = Buffer.from('é 작업', 'utf8')`,
+    `process.stdout.write(bytes.subarray(0, 1)); await wait(50); process.stdout.write(bytes.subarray(1)); process.stdout.write(lf)`,
+    `process.stderr.write('warning: engine log line' + lf + 'last words')`,
+  ].join(';')
+  const child = spawn(process.execPath, ['--input-type=module', '-e', script], { stdio: ['ignore', 'pipe', 'pipe'] })
+  const into = []
+  await captureOutput(child, into)
+  assert.deepEqual(into.filter((l) => l.stream === 'stdout').map((l) => l.text), ['é 작업'])
+  assert.deepEqual(into.filter((l) => l.stream === 'stderr').map((l) => l.text), ['warning: engine log line', 'last words'])
+})
+
+test('a start that fails says the last lines the app wrote; without captureOutput there is nothing to say', async () => {
+  const script = `console.error('panicked: no window'); console.log('starting'); process.exit(2)`
+  await assert.rejects(
+    App.launch({ exe: process.execPath, args: ['-e', script], port: 1, timeoutMs: 5000, captureOutput: true }),
+    /exited with 2 before its window was ready — the app wrote 2 lines: .*panicked: no window/s,
+  )
+  await assert.rejects(
+    App.launch({ exe: process.execPath, args: ['-e', script], port: 1, timeoutMs: 5000 }),
+    (e) => /exited with 2 before its window was ready$/.test(e.message),
+  )
+})
+
+test('a start that fails after much output still says its last words — the pipe is read to its end', async () => {
+  // Far more than a pipe holds at once: the process is gone before the last of it has been read.
+  const script = `for (let i = 0; i < 20000; i++) console.error('log line ' + i + ' '.padEnd(80, '.')); console.error('last words'); process.exit(3)`
+  await assert.rejects(
+    App.launch({ exe: process.execPath, args: ['-e', script], port: 1, timeoutMs: 5000, captureOutput: true }),
+    /exited with 3 before its window was ready — the app wrote 20001 lines, the last 3: .*stderr: last words$/s,
+  )
+})
+
+test('output says nothing when nothing was captured, and a failure report names the lines and the last few', () => {
+  const app = new App()
+  assert.deepEqual(app.output(), [])
+  assert.equal(outputLine(app), '')
+  app.output = (stream) => [
+    { stream: 'stderr', text: 'one' },
+    { stream: 'stdout', text: 'two' },
+    { stream: 'stderr', text: 'three' },
+    { stream: 'stderr', text: 'four' },
+  ].filter((l) => !stream || l.stream === stream)
+  assert.equal(outputLine(app), 'the app wrote 4 lines, the last 3: stdout: two · stderr: three · stderr: four')
+  assert.equal(outputLine({ output: () => [{ stream: 'stderr', text: 'only' }] }), 'the app wrote one line: stderr: only')
 })
