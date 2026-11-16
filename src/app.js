@@ -156,6 +156,7 @@ async function webviewCommandLines(platform = process.platform) {
  * for the page's own console calls.
  *
  * @typedef {{ level: string, text: string, source?: string }} ConsoleMessage
+ * @typedef {{ stream: 'stdout' | 'stderr', text: string }} OutputLine
  */
 
 /**
@@ -213,6 +214,53 @@ export function consoleMessage({ type, args = [] }) {
   return { level, text }
 }
 
+/**
+ * Takes what a process writes to one stream — in chunks that cut lines anywhere — and adds each whole line to `into` as
+ * `{ stream, text }`. `end` adds what is left, a last line with no line break after it. A line break is `\n` or `\r\n`;
+ * a lone `\r` (a progress bar redrawing itself) is part of the line.
+ *
+ * @param {'stdout' | 'stderr'} stream
+ * @param {OutputLine[]} into
+ */
+export function collectLines(stream, into) {
+  let rest = ''
+  return {
+    write(chunk) {
+      rest += chunk
+      const lines = rest.split(/\r?\n/)
+      rest = lines.pop()
+      for (const text of lines) into.push({ stream, text })
+    },
+    end() {
+      if (rest) into.push({ stream, text: rest })
+      rest = ''
+    },
+  }
+}
+
+/** Starts collecting what `child` writes to its standard output and error into `into`; the result settles once both streams are closed. */
+export function captureOutput(child, into) {
+  const done = []
+  for (const stream of /** @type {const} */ (['stdout', 'stderr'])) {
+    const source = child[stream]
+    if (!source) continue
+    const lines = collectLines(stream, into)
+    source.setEncoding('utf8')
+    source.on('data', (chunk) => lines.write(chunk))
+    done.push(new Promise((resolve) => source.once('close', () => (lines.end(), resolve()))))
+  }
+  return Promise.all(done)
+}
+
+/** What the app wrote, as a sentence for a failure report: how many lines, and the last few. Empty when it wrote none. */
+export function outputLine(app, last = 3) {
+  const lines = app.output()
+  if (!lines.length) return ''
+  const shown = lines.slice(-last).map((l) => `${l.stream}: ${l.text}`).join(' · ')
+  const count = lines.length === 1 ? 'one line' : `${lines.length} lines`
+  return `the app wrote ${count}${lines.length > last ? `, the last ${last}` : ''}: ${shown}`
+}
+
 export class App {
   /** @type {import('node:child_process').ChildProcess | undefined} */
   child
@@ -231,6 +279,9 @@ export class App {
    * @type {string}
    */
   dialogAnswers
+  /** @type {OutputLine[]} */
+  #output = []
+  #outputClosed = Promise.resolve()
   #options
 
   /**
@@ -249,6 +300,8 @@ export class App {
    *        identifier, which names its profile folder. `quit` then also waits for those processes (Windows).
    * @param {string[]} [options.leftovers]    executables an earlier run may have left running — the app's, its
    *        helpers' (`notes.exe`, `Notes.Host.exe`) — ended before the app starts (see `endLeftovers`)
+   * @param {boolean} [options.captureOutput]  collect what the app writes to its standard output and error, for
+   *        `app.output()` (default: it is thrown away). A failed start then says the last lines it wrote.
    */
   static async launch(options) {
     const { exe, port, ready = `document.readyState === 'complete'`, env = {}, args = [], helpersName = '__e2e', debugPortFromEnv = true, timeoutMs = 60_000, leftovers = [] } = options
@@ -266,9 +319,11 @@ export class App {
     const environment = { ...process.env, ...(debugPortFromEnv ? debugEnv(port) : {}), ...env, [DIALOG_ANSWERS]: app.dialogAnswers }
     // A development command (`tauri dev`) runs through a shell, in its own process group where there is one, so `quit`
     // ends everything it started — the dev server, the build, the app — and not only the shell.
+    const stdio = options.captureOutput ? ['ignore', 'pipe', 'pipe'] : 'ignore'
     app.child = options.command
-      ? spawn(options.command, { cwd: options.cwd, shell: true, stdio: 'ignore', env: environment, detached: process.platform !== 'win32' })
-      : spawn(exe, args, { stdio: 'ignore', env: environment })
+      ? spawn(options.command, { cwd: options.cwd, shell: true, stdio, env: environment, detached: process.platform !== 'win32' })
+      : spawn(exe, args, { stdio, env: environment })
+    if (options.captureOutput) app.#outputClosed = captureOutput(app.child, app.#output)
     // A run that ends without quitting — an error past its `finally`, `process.exit`, a hang given up on
     // with Ctrl+C — would leave the window running, and the next launch would meet it.
     app.#endWithProcess(app.child)
@@ -287,10 +342,26 @@ export class App {
       const why = String(e?.message).startsWith('no page on debugging port') && exe
         ? await webviewCommandLines().then((lines) => lines && debugPortDiagnosis(port, basename(exe), lines)).catch(() => undefined)
         : undefined
+      // An app that exited has its last words still in the pipe; give them a moment to arrive.
+      if (options.captureOutput && app.child.exitCode !== null) await Promise.race([app.#outputClosed, new Promise((r) => setTimeout(r, 500))])
+      const wrote = outputLine(app)
       await app.quit()
-      throw why ? new Error(`${e.message} — ${why}`, { cause: e }) : e
+      const said = [why, wrote].filter(Boolean).join(' — ')
+      throw said ? new Error(`${e.message} — ${said}`, { cause: e }) : e
     }
     return app
+  }
+
+  /**
+   * What the app wrote to its standard output and error since it was started, a line at a time in the order they arrived
+   * (`{ stream, text }`) — empty unless it was launched with `captureOutput: true`. `stream` names one of them: the two
+   * are separate pipes, so the order between a line of each is not exact.
+   *
+   * @param {'stdout' | 'stderr'} [stream]  only the lines of this one
+   * @returns {OutputLine[]}
+   */
+  output(stream) {
+    return this.#output.filter((l) => !stream || l.stream === stream)
   }
 
   /**
@@ -314,6 +385,8 @@ export class App {
     this.child = next.child
     this.cdp = next.cdp
     this.consoleMessages = next.consoleMessages
+    this.#output = next.#output
+    this.#outputClosed = next.#outputClosed
     this.#stopEnding = next.#stopEnding
   }
 
