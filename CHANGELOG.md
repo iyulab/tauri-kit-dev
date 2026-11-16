@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-11-16
+
 ### Changed
 
 - `gate`: a failed step's last 40 lines are printed again just above the summary, so the reason a step failed survives a
