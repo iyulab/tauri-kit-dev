@@ -392,8 +392,10 @@ test('a start that fails says the last lines the app wrote; without captureOutpu
 })
 
 test('a start that fails after much output still says its last words — the pipe is read to its end', async () => {
-  // Far more than a pipe holds at once: the process is gone before the last of it has been read.
-  const script = `for (let i = 0; i < 20000; i++) console.error('log line ' + i + ' '.padEnd(80, '.')); console.error('last words'); process.exit(3)`
+  // Far more than a pipe holds at once: the process is gone before the last of it has been read. It ends by setting its
+  // exit code rather than `process.exit`: on macOS Node writes to a pipe asynchronously, and `process.exit` drops what
+  // it has not written yet — the child's own loss, which no reader can recover.
+  const script = `for (let i = 0; i < 20000; i++) console.error('log line ' + i + ' '.padEnd(80, '.')); console.error('last words'); process.exitCode = 3`
   await assert.rejects(
     App.launch({ exe: process.execPath, args: ['-e', script], port: 1, timeoutMs: 5000, captureOutput: true }),
     /exited with 3 before its window was ready — the app wrote 20001 lines, the last 3: .*stderr: last words$/s,
